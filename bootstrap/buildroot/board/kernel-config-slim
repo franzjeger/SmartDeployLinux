@@ -1,0 +1,154 @@
+# Linux kernel config for the slim bootstrap image.
+#
+# Goal: smallest config that boots on the broadest set of mainstream x86_64
+# server/desktop hardware, brings up a wired NIC, and runs busybox + our
+# overlay. ~10 MB compressed bzImage.
+#
+# Regenerate via:
+#   cd $BR_DIR/output/build/linux-*
+#   make olddefconfig
+#   cp .config $REPO/bootstrap/buildroot/board/kernel-config-slim
+#
+# Notable exclusions: SCSI subsystems beyond AHCI/NVMe, sound, infiniband,
+# v4l, drm/i915, RAID, iSCSI, FCoE, all USB-network classes except
+# usbnet (kept for occasional USB-eth dongles), every fs except ext4 and
+# vfat (we boot from those two), all crypto subsystems beyond what TLS
+# needs.
+
+CONFIG_64BIT=y
+CONFIG_X86_64=y
+CONFIG_SMP=y
+
+# Init / shell
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_INITRAMFS_SOURCE=""
+CONFIG_INITRAMFS_COMPRESSION_GZIP=y
+CONFIG_RD_GZIP=y
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+CONFIG_TTY=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_HW_CONSOLE=y
+CONFIG_VT_HW_CONSOLE_BINDING=y
+CONFIG_FONTS=y
+CONFIG_FONT_8x16=y
+
+# UEFI
+CONFIG_EFI=y
+CONFIG_EFI_STUB=y
+CONFIG_EFI_MIXED=y
+CONFIG_EFI_PARTITION=y
+CONFIG_EFI_VARS=y
+CONFIG_EFIVAR_FS=y
+CONFIG_EFI_RUNTIME_WRAPPERS=y
+
+# Block / storage
+CONFIG_BLOCK=y
+CONFIG_BLK_DEV=y
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_ATA=y
+CONFIG_SATA_AHCI=y
+CONFIG_SATA_AHCI_PLATFORM=y
+CONFIG_BLK_DEV_NVME=y
+CONFIG_NVME_CORE=y
+CONFIG_USB_STORAGE=y
+
+# Networking core
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_IPV6=y
+CONFIG_PACKET=y
+CONFIG_UNIX=y
+CONFIG_NETLINK_DIAG=y
+
+# Network drivers (curated mainstream wired set)
+CONFIG_ETHERNET=y
+CONFIG_E1000=y
+CONFIG_E1000E=y
+CONFIG_IGB=y
+CONFIG_IGC=y
+CONFIG_IXGBE=y
+CONFIG_R8169=y
+CONFIG_TIGON3=y     # Broadcom NetXtreme
+CONFIG_BNX2=y
+CONFIG_VIRTIO_NET=y # for KVM e2e
+CONFIG_USB_USBNET=y
+CONFIG_USB_NET_AX88179_178A=y
+CONFIG_USB_NET_RTL8152=y
+
+# USB host controllers
+CONFIG_USB=y
+CONFIG_USB_XHCI_HCD=y
+CONFIG_USB_EHCI_HCD=y
+CONFIG_USB_OHCI_HCD=y
+CONFIG_HID=y
+CONFIG_HID_GENERIC=y
+CONFIG_USB_HID=y
+
+# PCI
+CONFIG_PCI=y
+CONFIG_PCI_MSI=y
+CONFIG_PCIEPORTBUS=y
+CONFIG_PCIE_PME=y
+
+# Filesystems
+CONFIG_EXT4_FS=y
+CONFIG_VFAT_FS=y
+CONFIG_NLS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ASCII=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_NLS_UTF8=y
+CONFIG_PROC_FS=y
+CONFIG_SYSFS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_TMPFS=y
+CONFIG_TMPFS_POSIX_ACL=y
+
+# Networking — userspace (Tailscale userspace mode wants TUN; we use
+# --tun=userspace-networking but the binary may still poke TUN.)
+CONFIG_TUN=y
+
+# Crypto for TLS (curl + Tailscale)
+CONFIG_CRYPTO=y
+CONFIG_CRYPTO_AES=y
+CONFIG_CRYPTO_AES_NI_INTEL=y
+CONFIG_CRYPTO_GCM=y
+CONFIG_CRYPTO_SHA256=y
+CONFIG_CRYPTO_SHA512=y
+CONFIG_CRYPTO_HMAC=y
+CONFIG_CRYPTO_USER_API_HASH=y
+CONFIG_CRYPTO_USER_API_SKCIPHER=y
+
+# Random
+CONFIG_RANDOM_TRUST_CPU=y
+
+# Console / serial (useful for headless debugging)
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+CONFIG_SERIAL_8250_PCI=y
+
+# kexec for the BIOS->iPXE handoff
+CONFIG_KEXEC=y
+
+# Compression of bzImage itself
+CONFIG_KERNEL_GZIP=y
+
+# Firmware loader (we ship NO firmware blobs in slim; CONFIG_EXTRA_FIRMWARE
+# stays empty)
+CONFIG_FW_LOADER=y
+CONFIG_EXTRA_FIRMWARE=""
+
+# Disable noise we don't need
+# CONFIG_SOUND is not set
+# CONFIG_DRM is not set
+# CONFIG_FB is not set
+# CONFIG_INFINIBAND is not set
+# CONFIG_MEDIA_SUPPORT is not set
+# CONFIG_RAID is not set
+# CONFIG_MD is not set
+# CONFIG_DM_CRYPT is not set
+# CONFIG_BLUETOOTH is not set
+# CONFIG_WIRELESS is not set    # slim profile is wired-only

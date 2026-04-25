@@ -1,0 +1,41 @@
+{
+  "tagOwners": {
+    "tag:deploy-server":    ["group:deploy-admin"],
+    "tag:deploy-bootstrap": ["group:deploy-admin"],
+    "tag:deploy-target":    ["group:deploy-admin"],
+    "tag:deploy-edge":      ["group:deploy-admin"]
+  },
+  "groups": {
+    "group:deploy-admin": ["admin@example.com"]
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src":    ["tag:deploy-bootstrap"],
+      "dst":    ["tag:deploy-server:443"]
+    },
+    {
+      "action": "accept",
+      "src":    ["tag:deploy-target"],
+      "dst":    ["tag:deploy-server:443", "tag:deploy-server:80"]
+    },
+    {
+      "action": "accept",
+      "src":    ["tag:deploy-edge"],
+      "dst":    ["tag:deploy-server:443"]
+    },
+    {
+      "action": "accept",
+      "src":    ["group:deploy-admin"],
+      "dst":    ["*:*"]
+    }
+  ],
+  "ssh": [],
+  "autoApprovers": {
+    "routes": {
+      "10.0.0.0/8":     ["tag:deploy-edge"],
+      "192.168.0.0/16": ["tag:deploy-edge"],
+      "172.16.0.0/12":  ["tag:deploy-edge"]
+    }
+  }
+}

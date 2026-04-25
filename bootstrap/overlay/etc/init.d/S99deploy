@@ -1,0 +1,27 @@
+#!/bin/sh
+# Last init script. Hands control to the deploy-bootstrap binary which runs
+# the operator-code redeem flow and then execs iPXE.
+#
+# This is invoked by busybox init via /etc/inittab's sysinit entry running
+# /etc/init.d/rcS, which in turn runs every /etc/init.d/S* in lexical order.
+
+set -eu
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+case "${1:-start}" in
+    start)
+        # We do not exec; we run as a child so that if deploy-bootstrap
+        # crashes we drop to a shell rather than hard-rebooting.
+        /usr/local/bin/deploy-bootstrap || {
+            echo "deploy-bootstrap failed; dropping to shell."
+            exec /bin/sh
+        }
+        ;;
+    stop)
+        : ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1 ;;
+esac

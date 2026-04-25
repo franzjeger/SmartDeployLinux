@@ -1,0 +1,53 @@
+# Secrets — NEVER commit
+.env
+.env.local
+.env.production
+secrets/
+*.pem
+!ipxe/certs/.gitkeep
+!docs/**/*.pem
+*.key
+*.crt
+*.cer
+bootstrap/keys/MOK.priv
+bootstrap/keys/MOK.crt
+bootstrap/keys/MOK.cer
+
+# Binary fetches done by bootstrap/external/fetch.sh — these are pinned
+# upstream artifacts (shim, grub, tailscale) the user fetches per machine.
+bootstrap/external/shim/
+bootstrap/external/grub/
+bootstrap/external/tailscale/
+
+# Build outputs
+bootstrap/output/
+ipxe/build/
+ipxe/src/
+**/build/
+**/dist/
+*.img
+*.img.sha256
+*.iso
+*.wim
+
+# Go
+*.test
+*.out
+*.coverprofile
+/tmp/
+**/vendor/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*~
+
+# Test scratch
+tests/e2e/work/
+.terraform/
+*.tfstate
+*.tfstate.backup

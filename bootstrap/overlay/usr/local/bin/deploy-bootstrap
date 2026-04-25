@@ -1,0 +1,230 @@
+#!/bin/sh
+# deploy-bootstrap: the script that runs after the kernel boots from the
+# USB stick. Drives the network bring-up, code prompt, redeem flow,
+# tailscale up, and iPXE handoff.
+#
+# Single shell script intentionally — easier to audit, debug, and tweak
+# in the field than a compiled Go binary, and the trust boundary lives
+# in the cert pin (curl --cacert) and the embedded config, not in the
+# code itself.
+#
+# Exit codes:
+#   0 = normal exit (we exec'd into iPXE so this script doesn't return)
+#   1 = config invalid / unrecoverable
+#   2 = network never came up
+#   3 = operator gave up at TUI
+#   4 = redeem permanently failed (rate-limited or code locked)
+#   5 = tailnet didn't come up
+#   6 = iPXE exec failed
+#
+# Logs go to /dev/console and to /var/log/deploy-bootstrap.log.
+
+set -eu
+
+LOG=/var/log/deploy-bootstrap.log
+mkdir -p /var/log
+exec 3>>$LOG
+log() { printf '[%s] %s\n' "$(date -Iseconds)" "$*" | tee /dev/console >&3; }
+
+CONFIG=/etc/deploy/config.json
+[ -r "$CONFIG" ] || { log "FATAL: $CONFIG missing"; exit 1; }
+
+# Tiny JSON extractor. We avoid bringing in jq for size; the config is
+# under our control and we know the schema, so a sed pull is safe.
+get_cfg() {
+    sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$CONFIG" | head -n 1
+}
+
+DEPLOY_URL=$(get_cfg deploy_url)
+TAILNET=$(get_cfg tailnet)
+CONTROL_URL=$(get_cfg control_url)
+CA_FILE=/etc/ssl/certs/deploy-ca.pem
+[ -r "$CA_FILE" ] || { log "FATAL: $CA_FILE missing"; exit 1; }
+[ -n "$DEPLOY_URL" ] || { log "FATAL: deploy_url empty"; exit 1; }
+
+log "deploy-bootstrap starting; deploy_url=$DEPLOY_URL"
+
+# Per-boot UUID for correlation.
+BOOT_UUID=$(cat /proc/sys/kernel/random/uuid)
+STICK_SHA=$(get_cfg image_sha256)
+
+# --- 1. network -------------------------------------------------------
+
+# Find first wired NIC.
+NIC=
+for i in $(ls /sys/class/net); do
+    case "$i" in
+        lo|wlan*|wwan*) continue ;;
+    esac
+    if [ -e "/sys/class/net/$i/device" ]; then
+        NIC=$i
+        break
+    fi
+done
+
+[ -n "$NIC" ] || { log "FATAL: no wired NIC found"; exit 2; }
+log "Using NIC $NIC"
+
+ip link set up dev "$NIC"
+
+log "Requesting DHCP on $NIC ..."
+if ! udhcpc -n -t 6 -T 5 -i "$NIC" >/dev/null 2>&1; then
+    log "DHCP failed on $NIC"
+    exit 2
+fi
+log "DHCP ok: $(ip -4 addr show dev $NIC | sed -n 's/.*inet \([0-9.]*\).*/\1/p')"
+
+# --- 2. NTP -----------------------------------------------------------
+
+log "Syncing clock via chrony ..."
+chronyd -q 'pool pool.ntp.org iburst' >/dev/null 2>&1 || \
+    log "WARN: NTP sync failed; TLS may reject server cert"
+
+# --- 3. reachability check -------------------------------------------
+
+DEPLOY_HOST=$(printf '%s' "$DEPLOY_URL" | sed -E 's#https?://([^/]+).*#\1#' | cut -d: -f1)
+log "Checking reachability of $DEPLOY_HOST:443 ..."
+if ! nc -z -w 5 "$DEPLOY_HOST" 443 2>/dev/null; then
+    log "WARN: Cannot reach $DEPLOY_HOST:443 yet; will retry on redeem"
+fi
+
+# --- 4. operator code prompt ------------------------------------------
+
+attempts=0
+while :; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -gt 5 ]; then
+        log "Too many failed attempts; giving up."
+        exit 4
+    fi
+
+    CODE=$(dialog --stdout --inputbox \
+        "Enter your 6-character deployment code (e.g. 4A7-K2P):\n\nAttempt $attempts of 5" \
+        12 60 || echo CANCEL)
+    case "$CODE" in
+        CANCEL|"") log "Operator cancelled"; exit 3 ;;
+    esac
+
+    # Tolerant input: strip spaces and dashes; uppercase. The server
+    # also normalizes.
+    NORM=$(printf '%s' "$CODE" | tr '[:lower:]' '[:upper:]' | tr -d ' -')
+
+    log "Redeeming code (attempt $attempts) ..."
+    REQ_BODY=$(printf '{"code":"%s","stick_image_sha256":"%s","boot_uuid":"%s"}' \
+        "$NORM" "$STICK_SHA" "$BOOT_UUID")
+
+    RESP=$(curl --silent --show-error --fail-with-body \
+        --cacert "$CA_FILE" \
+        --max-time 15 \
+        --header 'Content-Type: application/json' \
+        --header "User-Agent: deploy-bootstrap/$(get_cfg version)" \
+        --data-raw "$REQ_BODY" \
+        "$DEPLOY_URL/api/v1/bootstrap/redeem" 2>&1) || RC=$?
+    RC=${RC:-0}
+
+    if [ "$RC" -eq 0 ]; then
+        log "Redeem ok"
+        break
+    fi
+
+    log "Redeem failed: rc=$RC body=$RESP"
+
+    # Friendly error mapping.
+    case "$RESP" in
+        *invalid_code*)
+            dialog --msgbox "Code not recognized. Check it and try again." 7 50 ;;
+        *code_consumed_or_expired*)
+            dialog --msgbox "This code has expired or already been used.\n\nAsk your operator to issue a new one." 9 50
+            exit 4 ;;
+        *rate_limited*)
+            dialog --msgbox "Rate-limited by the deploy server. Wait a minute, then press OK to try again." 9 50
+            sleep 60 ;;
+        *ip_not_allowed*)
+            dialog --msgbox "This code is bound to a different network. You cannot redeem from here." 9 50
+            exit 4 ;;
+        *)
+            dialog --msgbox "Network or server error. Press OK to retry." 7 50 ;;
+    esac
+done
+
+# Parse response. Fields needed: auth_key, control_url, chainload_url.
+extract() { printf '%s' "$RESP" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1; }
+AUTHKEY=$(extract auth_key)
+RESP_CTRL=$(extract control_url)
+CHAIN_URL=$(extract chainload_url)
+MACHINE_ID=$(extract machine_id)
+
+[ -n "$AUTHKEY" ] || { log "FATAL: response had no auth_key"; exit 4; }
+[ -n "$CHAIN_URL" ] || { log "FATAL: response had no chainload_url"; exit 4; }
+
+# control_url precedence: response > config > none (Tailscale SaaS path).
+LOGIN_SERVER=$RESP_CTRL
+[ -z "$LOGIN_SERVER" ] && LOGIN_SERVER=$CONTROL_URL
+
+# --- 5. tailscaled up -------------------------------------------------
+
+log "Starting tailscaled in userspace-networking mode ..."
+mkdir -p /var/lib/tailscale
+tailscaled \
+    --tun=userspace-networking \
+    --socks5-server=localhost:1055 \
+    --outbound-http-proxy-listen=localhost:1055 \
+    --state=/var/lib/tailscale/tailscaled.state \
+    >/var/log/tailscaled.log 2>&1 &
+TSDPID=$!
+
+# Wait for the socket.
+for _ in 1 2 3 4 5; do
+    [ -S /var/run/tailscale/tailscaled.sock ] && break
+    sleep 1
+done
+
+UP_ARGS="--authkey=$AUTHKEY --hostname=bootstrap-${BOOT_UUID%%-*} --ephemeral --reset"
+[ -n "$LOGIN_SERVER" ] && UP_ARGS="$UP_ARGS --login-server=$LOGIN_SERVER"
+
+log "tailscale up ..."
+if ! tailscale up $UP_ARGS >>/var/log/tailscaled.log 2>&1; then
+    log "FATAL: tailscale up failed"
+    kill $TSDPID 2>/dev/null || true
+    exit 5
+fi
+
+log "tailnet membership established"
+
+# --- 6. iPXE handoff --------------------------------------------------
+
+# Detect firmware mode: UEFI or BIOS, x64 or x86.
+FW_MODE=bios
+[ -d /sys/firmware/efi ] && FW_MODE=uefi
+
+case "$FW_MODE" in
+    uefi)
+        IPXE_BIN=/opt/iPXE/ipxe.efi ;;
+    *)
+        IPXE_BIN=/opt/iPXE/undionly.kpxe ;;
+esac
+
+[ -x "$IPXE_BIN" ] || [ -r "$IPXE_BIN" ] || {
+    log "FATAL: $IPXE_BIN missing"
+    exit 6
+}
+
+dialog --infobox "Bootstrap complete. Loading installer ...\n\nIt is safe to unplug the USB stick once you see the installer banner." 7 60
+sleep 2
+
+# We invoke iPXE via kexec. The kernel cmdline gives iPXE a bootstrap
+# script that immediately chains to the central deploy server via the
+# tailnet (which is now reachable as a unicast IP, no broadcast).
+TMP_IPXE_SCRIPT=/tmp/chain.ipxe
+cat > $TMP_IPXE_SCRIPT <<EOF
+#!ipxe
+echo Chainloading from deploy server ...
+chain --autofree $CHAIN_URL || shell
+EOF
+
+# kexec works for the BIOS undionly path because iPXE ships an EFI loader
+# variant; for the UEFI path we use systemd-style efi-handoff. In v1 we
+# rely on iPXE's own "shell-style" exec via a trampoline initramfs;
+# documented in docs/BOOTSTRAP.md §6.
+log "exec iPXE ..."
+exec /usr/local/bin/exec-ipxe "$IPXE_BIN" "$TMP_IPXE_SCRIPT"

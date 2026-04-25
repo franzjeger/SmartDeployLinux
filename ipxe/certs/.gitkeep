@@ -1,0 +1,2 @@
+# Place deploy-ca.pem here. It will be embedded into the iPXE binary at
+# build time as the trusted root for HTTPS chainloads.

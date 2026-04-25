@@ -1,0 +1,83 @@
+# Top-level Makefile. Each subsystem has its own Makefile; this one
+# orchestrates them and is the single entry point for CI.
+
+SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
+.DEFAULT_GOAL := help
+
+# Pinned tool versions. CI fails if these drift.
+GO_VERSION             ?= 1.23.4
+NODE_VERSION           ?= 22.11.0
+BUILDROOT_VERSION      ?= 2025.02
+IPXE_REF               ?= v1.21.1
+TAILSCALE_VERSION      ?= 1.86.0
+DNSMASQ_VERSION        ?= 2.90
+SHIM_VERSION           ?= 15.8
+GRUB_VERSION           ?= 2.12
+
+# Tagging scheme for produced container images.
+REGISTRY               ?= ghcr.io/your-org/deployserver
+TAG                    ?= dev
+
+# --- top-level targets -----------------------------------------------------
+
+help: ## Show this help.
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+build: build-images build-bootstrap build-ipxe ## Build everything.
+
+build-images: ## Build all service container images.
+	docker buildx bake --file docker-bake.hcl --set "*.platform=linux/amd64" --load
+
+build-bootstrap: ## Build the USB bootstrap image (calls bootstrap/Makefile).
+	$(MAKE) -C bootstrap all
+
+build-ipxe: ## Build the iPXE binaries (calls ipxe/Makefile).
+	$(MAKE) -C ipxe all
+
+up: ## Bring up the small-tier compose stack.
+	docker compose up -d
+
+down: ## Stop the compose stack.
+	docker compose down
+
+logs: ## Tail compose logs.
+	docker compose logs -f --tail=200
+
+seed-admin: ## Seed first admin user (after up). Reads OIDC_* from .env.
+	docker compose exec api /usr/local/bin/api seed-admin
+
+migrate: ## Run DB migrations.
+	docker compose exec api /usr/local/bin/api migrate up
+
+# --- tests -----------------------------------------------------------------
+
+test: test-unit ## Run unit tests.
+
+test-unit: ## Run Go and Node unit tests.
+	cd services/api && go test ./...
+	cd services/auth-broker && go test ./...
+	cd services/worker && go test ./...
+	cd services/edge-agent && go test ./...
+	cd services/ui && npm test --silent
+
+test-e2e: build-bootstrap ## Run nested-KVM e2e (needs /dev/kvm).
+	$(MAKE) -C tests/e2e run
+
+# --- security --------------------------------------------------------------
+
+sec-scan: ## Run gosec, bandit-equiv (none), trivy on images, govulncheck.
+	cd services/api && govulncheck ./...
+	cd services/auth-broker && govulncheck ./...
+	cd services/worker && govulncheck ./...
+	gosec -severity high ./services/...
+	trivy fs --severity HIGH,CRITICAL --exit-code 1 .
+
+# --- cleaning --------------------------------------------------------------
+
+clean:
+	$(MAKE) -C bootstrap clean
+	$(MAKE) -C ipxe clean
+
+.PHONY: help build build-images build-bootstrap build-ipxe up down logs \
+        seed-admin migrate test test-unit test-e2e sec-scan clean

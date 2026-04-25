@@ -1,0 +1,24 @@
+# Force LF on shell scripts and source code so they work in Linux
+# containers regardless of contributor OS.
+* text=auto eol=lf
+*.sh   text eol=lf
+*.go   text eol=lf
+*.sql  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.conf text eol=lf
+
+# Windows scripts must keep CRLF.
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binaries
+*.png  binary
+*.jpg  binary
+*.efi  binary
+*.kpxe binary
+*.lkrn binary
+*.wim  binary
+*.img  binary

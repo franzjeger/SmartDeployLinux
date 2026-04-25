@@ -1,0 +1,73 @@
+#!/bin/sh
+# Replace the running Linux with iPXE.
+#
+# Two implementation strategies depending on firmware mode:
+#
+#  1. BIOS / UEFI-CSM: kexec into iPXE's PE/ELF binary form. iPXE ships
+#     ipxe.lkrn which is a kexec-able Linux-style image; we use that.
+#
+#  2. Pure UEFI: kexec into iPXE's EFI executable is not supported by
+#     mainline kexec. We use an intermediate jump: write the iPXE EFI
+#     binary to the ESP under a known name, then call `efibootmgr` to
+#     boot it next-only, then reboot. This is slower (full reboot) but
+#     reliable across firmware vendors.
+#
+# Caller passes:
+#   $1 = path to ipxe.efi (or undionly.kpxe / ipxe.lkrn)
+#   $2 = path to chain.ipxe script
+
+set -eu
+
+IPXE=$1
+SCRIPT=$2
+LOG=/var/log/deploy-bootstrap.log
+log() { printf '[%s] exec-ipxe: %s\n' "$(date -Iseconds)" "$*" | tee /dev/console >>"$LOG"; }
+
+[ -d /sys/firmware/efi ] && FW=uefi || FW=bios
+
+case "$FW" in
+    bios)
+        if [ ! -x /sbin/kexec ]; then
+            log "FATAL: kexec not present (needed for BIOS handoff)"
+            exit 1
+        fi
+        # Use ipxe.lkrn — provided by ipxe build alongside undionly.kpxe.
+        LKRN=$(dirname "$IPXE")/ipxe.lkrn
+        if [ ! -r "$LKRN" ]; then
+            log "FATAL: $LKRN missing; rebuild ipxe with bin/ipxe.lkrn"
+            exit 1
+        fi
+        log "kexec -l $LKRN with embedded chain script"
+        kexec -l "$LKRN" --command-line="dhcp && chain $(cat $SCRIPT | tail -n 1 | awk '{print $2}')"
+        sync
+        kexec -e
+        ;;
+    uefi)
+        ESP=/boot/efi
+        # If /boot/efi isn't mounted (we may have booted with the ESP only
+        # readable as the partition), mount the USB ESP.
+        if ! mountpoint -q "$ESP"; then
+            mkdir -p "$ESP"
+            for d in /dev/sd* /dev/nvme*n*p* /dev/mmcblk*p*; do
+                [ -b "$d" ] || continue
+                if blkid "$d" 2>/dev/null | grep -q 'TYPE="vfat"'; then
+                    mount -t vfat "$d" "$ESP" && break
+                fi
+            done
+        fi
+        cp "$IPXE" "$ESP/EFI/BOOT/IPXE_NEXT.EFI"
+        # Embed the chain script into the iPXE binary at build time, OR
+        # pass it via a sidecar file iPXE auto-loads. We chose the
+        # build-time embed in ipxe/embed.script, so SCRIPT is mostly a
+        # debug aid here.
+        log "rebooting into iPXE via efibootmgr next-only"
+        efibootmgr -c -d /dev/disk/by-label/ESP -p 1 \
+            -L "deployserver-ipxe-next" \
+            -l '\\EFI\\BOOT\\IPXE_NEXT.EFI' >/dev/null
+        # The new boot entry is appended; mark it BootNext.
+        BOOTNUM=$(efibootmgr | awk '/deployserver-ipxe-next/ { sub("Boot",""); sub("[*].*",""); print; exit }')
+        efibootmgr -n "$BOOTNUM" >/dev/null
+        sync
+        reboot -f
+        ;;
+esac

@@ -1,0 +1,8 @@
+{
+  "deploy_url":   "@@DEPLOY_URL@@",
+  "tailnet":      "@@TAILNET@@",
+  "control_url":  "@@CONTROL_URL@@",
+  "image_sha256": "@@IMAGE_SHA256@@",
+  "version":      "@@VERSION@@",
+  "_doc": "Substituted by make-stick.sh at build time. NO secrets here."
+}

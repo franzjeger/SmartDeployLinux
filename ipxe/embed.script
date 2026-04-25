@@ -1,0 +1,54 @@
+#!ipxe
+# Embedded entrypoint script. Runs immediately when iPXE starts, before
+# any user input. Two distinct invocation contexts:
+#
+#   1. From deploy-bootstrap on the USB stick: the chainload URL is passed
+#      as the kernel cmdline parameter `deploy.chain=...` and we extract
+#      it via `imgargs`. (Actually iPXE doesn't read kernel cmdline like
+#      that; on the bootstrap path deploy-bootstrap writes a temporary
+#      script with the chain URL into the iPXE invocation. See
+#      bootstrap/overlay/usr/local/bin/deploy-bootstrap for the exec.)
+#
+#   2. From LAN PXE chainload: DHCP supplied a next-server and filename
+#      pointing to *this* binary; we then chain to the central HTTPS
+#      endpoint computed below.
+#
+# Common case: chain to the central deploy server's per-MAC iPXE endpoint
+# over HTTPS. The cert presented there must chain to the CA embedded at
+# build time (see ipxe/Makefile and ipxe/certs/deploy-ca.pem).
+
+set deploy_url https://deploy.example.com
+set retry_count:int32 0
+
+:start
+echo deployserver iPXE bootstrap (build ${buildarch})
+echo Asserting network ...
+
+# Bring up DHCP if we don't already have it (LAN PXE path will already
+# have it; bootstrap path tunnels via the host's tailnet which iPXE
+# sees as a separate already-up netdev when invoked with --autofree).
+ifstat
+isset ${net0/ip} || dhcp || goto netfail
+
+# Sync clock from net0's server, if available, to satisfy TLS NotBefore
+# checks on freshly-imaged hardware.
+ntp pool.ntp.org ||
+
+echo Resolving ${deploy_url} ...
+chain --autofree ${deploy_url}/boot/by-mac/${net0/mac}.ipxe || goto chainfail
+
+:chainfail
+inc retry_count
+echo Chain failed (${retry_count}). Sleeping 5s and retrying ...
+sleep 5
+iseq ${retry_count} 5 && goto giveup ||
+goto start
+
+:netfail
+echo No DHCP lease on net0 within timeout. Check cabling.
+prompt --key 0x197e --timeout 30000 Press F12 for shell
+shell
+
+:giveup
+echo Could not chain after 5 attempts. Dropping to iPXE shell.
+shell

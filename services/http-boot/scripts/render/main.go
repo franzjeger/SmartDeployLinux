@@ -1,0 +1,233 @@
+// render is the per-machine iPXE script + answer-file renderer.
+// nginx fronts it for static blob delivery; render handles the dynamic
+// per-machine endpoints by calling the API for machine + profile data
+// and templating the result.
+//
+// This binary trusts the API. mTLS between render and API is enforced
+// via the `api` service binding; render is on the same docker network.
+
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+)
+
+func main() {
+	apiURL := getenv("API_INTERNAL_URL", "http://api:8080")
+	listen := getenv("RENDER_LISTEN", ":8444")
+
+	r := chi.NewRouter()
+	h := &handlers{apiURL: apiURL, http: &http.Client{Timeout: 5 * time.Second}}
+
+	r.Get("/render/by-token/{token}", h.renderIPXEByToken)
+	r.Get("/render/by-token/{token}/user-data", h.renderUserDataByToken)
+	r.Get("/render/by-token/{token}/meta-data", h.renderMetaDataByToken)
+	r.Get("/render/by-token/{token}/vendor-data", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+	// Legacy:
+	r.Get("/render/by-id/{id}", h.renderIPXEByID)
+	r.Get("/render/by-mac/{mac}", h.renderIPXEByMAC)
+	r.Get("/render/{id}/user-data", h.renderUserData)
+	r.Get("/render/{id}/meta-data", h.renderMetaData)
+	r.Get("/render/{id}/vendor-data", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	})
+	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	slog.Info("render listening", "addr", listen, "api", apiURL)
+	if err := http.ListenAndServe(listen, r); err != nil {
+		slog.Error("listen", "err", err)
+		os.Exit(1)
+	}
+}
+
+type handlers struct {
+	apiURL string
+	http   *http.Client
+}
+
+type machineProfileResp struct {
+	Machine struct {
+		ID          string `json:"id"`
+		AssetTag    string `json:"asset_tag"`
+		MAC         string `json:"mac_primary"`
+	} `json:"machine"`
+	Profile struct {
+		ID         string                 `json:"id"`
+		Name       string                 `json:"name"`
+		Vars       map[string]interface{} `json:"vars"`
+	} `json:"profile"`
+	Image struct {
+		OSFamily   string `json:"os_family"`
+		OSVersion  string `json:"os_version"`
+		Arch       string `json:"arch"`
+		KernelURL  string `json:"kernel_url,omitempty"`
+		InitrdURL  string `json:"initrd_url,omitempty"`
+		WimbootURL string `json:"wimboot_url,omitempty"`
+		BootWimURL string `json:"bootwim_url,omitempty"`
+		WimURL     string `json:"wim_url,omitempty"`
+	} `json:"image"`
+	OneShotToken string `json:"one_shot_token,omitempty"`
+	JobID        string `json:"job_id,omitempty"`
+}
+
+func (h *handlers) fetch(path string) (*machineProfileResp, error) {
+	resp, err := h.http.Get(h.apiURL + path)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, fmt.Errorf("api %d: %s", resp.StatusCode, string(b))
+	}
+	var out machineProfileResp
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (h *handlers) renderIPXEByToken(w http.ResponseWriter, r *http.Request) {
+	tok := chi.URLParam(r, "token")
+	data, err := h.fetch("/internal/render/by-token/" + tok)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "fetch by token", "err", err)
+		http.Error(w, "token invalid or consumed", 410)
+		return
+	}
+	h.writeIPXE(w, r, data)
+}
+
+func (h *handlers) renderUserDataByToken(w http.ResponseWriter, r *http.Request) {
+	tok := chi.URLParam(r, "token")
+	resp, err := h.http.Get(h.apiURL + "/internal/render/by-token/" + tok + "/user-data")
+	if err != nil || resp.StatusCode != 200 {
+		http.Error(w, "user-data unavailable", 502)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "text/cloud-config")
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (h *handlers) renderMetaDataByToken(w http.ResponseWriter, r *http.Request) {
+	tok := chi.URLParam(r, "token")
+	resp, err := h.http.Get(h.apiURL + "/internal/render/by-token/" + tok + "/meta-data")
+	if err != nil || resp.StatusCode != 200 {
+		http.Error(w, "meta-data unavailable", 502)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/yaml")
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (h *handlers) renderIPXEByID(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	data, err := h.fetch("/internal/render/machine/" + id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "fetch machine", "id", id, "err", err)
+		http.Error(w, "machine not found", 404)
+		return
+	}
+	h.writeIPXE(w, r, data)
+}
+
+func (h *handlers) renderIPXEByMAC(w http.ResponseWriter, r *http.Request) {
+	mac := chi.URLParam(r, "mac")
+	data, err := h.fetch("/internal/render/by-mac/" + mac)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "fetch by mac", "mac", mac, "err", err)
+		http.Error(w, "machine not found", 404)
+		return
+	}
+	h.writeIPXE(w, r, data)
+}
+
+var linuxTpl = template.Must(template.New("linux").Parse(`#!ipxe
+echo Deploying {{.Profile.Name}} to {{.Machine.AssetTag}} ({{.Machine.ID}})
+kernel {{.Image.KernelURL}} initrd=initrd.img \
+    autoinstall \
+    ds=nocloud-net;s=https://{{.DeployFQDN}}/boot/{{.Machine.ID}}/ \
+    ip=dhcp \
+    cloud-config-url=/dev/null
+initrd {{.Image.InitrdURL}}
+boot
+`))
+
+var windowsTpl = template.Must(template.New("windows").Parse(`#!ipxe
+echo Deploying Windows ({{.Profile.Name}}) to {{.Machine.AssetTag}}
+kernel {{.Image.WimbootURL}} \
+    initrd=boot.wim \
+    initrd=BCD \
+    initrd=boot.sdi \
+    initrd=bootmgr.exe \
+    initrd=fonts/wgl4_boot.ttf
+initrd --name boot.wim {{.Image.BootWimURL}}
+imgargs wimboot _DEPLOY_JOB_ID={{.JobID}} _DEPLOY_TOKEN={{.OneShotToken}} \
+    _DEPLOY_API=https://{{.DeployFQDN}}/api
+boot
+`))
+
+func (h *handlers) writeIPXE(w http.ResponseWriter, _ *http.Request, data *machineProfileResp) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	tplData := struct {
+		*machineProfileResp
+		DeployFQDN string
+	}{data, getenv("DEPLOY_FQDN", "deploy.example.com")}
+
+	switch strings.ToLower(data.Image.OSFamily) {
+	case "linux":
+		_ = linuxTpl.Execute(w, tplData)
+	case "windows":
+		_ = windowsTpl.Execute(w, tplData)
+	default:
+		http.Error(w, "unknown os_family: "+data.Image.OSFamily, 500)
+	}
+}
+
+func (h *handlers) renderUserData(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	resp, err := h.http.Get(h.apiURL + "/internal/render/" + id + "/user-data")
+	if err != nil || resp.StatusCode != 200 {
+		http.Error(w, "user-data unavailable", 502)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "text/cloud-config")
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (h *handlers) renderMetaData(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	resp, err := h.http.Get(h.apiURL + "/internal/render/" + id + "/meta-data")
+	if err != nil || resp.StatusCode != 200 {
+		http.Error(w, "meta-data unavailable", 502)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/yaml")
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}

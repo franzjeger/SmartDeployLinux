@@ -1,0 +1,199 @@
+# Small-tier deploy: single host, all services on one docker network.
+# State lives in the postgres and minio volumes. App containers are stateless.
+#
+# Production: read docker-compose.ha.yml. This file is for the lab/single-host
+# tier; do not run it directly in production without externalizing the DB and
+# object store.
+
+name: deployserver
+
+networks:
+  deploy:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  minio-data:
+  caddy-data:
+  caddy-config:
+  secrets:
+
+services:
+
+  postgres:
+    image: postgres:16.6-alpine
+    restart: unless-stopped
+    networks: [deploy]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    networks: [deploy]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-09-07T16-13-09Z
+    networks: [deploy]
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY}
+        mc mb -p local/${S3_BUCKET_IMAGES} || true
+        mc mb -p local/${S3_BUCKET_DRIVERS} || true
+        mc mb -p local/${S3_BUCKET_BLOBS} || true
+        mc anonymous set-json /dev/null local/${S3_BUCKET_IMAGES} || true
+        echo "buckets ready"
+
+  api:
+    image: ${REGISTRY:-localhost}/deployserver-api:${TAG:-dev}
+    build:
+      context: ./services/api
+    restart: unless-stopped
+    networks: [deploy]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment: &common-env
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET_IMAGES: ${S3_BUCKET_IMAGES}
+      S3_BUCKET_DRIVERS: ${S3_BUCKET_DRIVERS}
+      S3_BUCKET_BLOBS: ${S3_BUCKET_BLOBS}
+      OIDC_ISSUER: ${OIDC_ISSUER}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL}
+      API_LISTEN: ${API_LISTEN}
+      API_PUBLIC_URL: ${API_PUBLIC_URL}
+      DEPLOY_FQDN: ${DEPLOY_FQDN}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+      LOG_LEVEL: ${LOG_LEVEL}
+      LOG_FORMAT: ${LOG_FORMAT}
+    volumes:
+      - secrets:/secrets:ro
+
+  auth-broker:
+    image: ${REGISTRY:-localhost}/deployserver-auth-broker:${TAG:-dev}
+    build:
+      context: ./services/auth-broker
+    restart: unless-stopped
+    networks: [deploy]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      AUTH_BROKER_LISTEN: ${AUTH_BROKER_LISTEN}
+      AUTH_BROKER_DEFAULT_CODE_TTL: ${AUTH_BROKER_DEFAULT_CODE_TTL}
+      AUTH_BROKER_TS_AUTHKEY_TTL: ${AUTH_BROKER_TS_AUTHKEY_TTL}
+      AUTH_BROKER_RATE_LIMIT_REDEEM_PER_IP_PER_HOUR: ${AUTH_BROKER_RATE_LIMIT_REDEEM_PER_IP_PER_HOUR}
+      AUTH_BROKER_RATE_LIMIT_REDEEM_PER_CODE: ${AUTH_BROKER_RATE_LIMIT_REDEEM_PER_CODE}
+      HEADSCALE_URL: ${HEADSCALE_URL}
+      HEADSCALE_API_KEY: ${HEADSCALE_API_KEY}
+      HEADSCALE_USER: ${HEADSCALE_USER}
+      TAILSCALE_API_KEY: ${TAILSCALE_API_KEY}
+      TAILSCALE_TAILNET: ${TAILSCALE_TAILNET}
+    volumes:
+      - secrets:/secrets:ro
+
+  http-boot:
+    image: ${REGISTRY:-localhost}/deployserver-http-boot:${TAG:-dev}
+    build:
+      context: ./services/http-boot
+    restart: unless-stopped
+    networks: [deploy]
+    environment:
+      <<: *common-env
+      API_INTERNAL_URL: http://api:8080
+    volumes:
+      - secrets:/secrets:ro
+
+  worker:
+    image: ${REGISTRY:-localhost}/deployserver-worker:${TAG:-dev}
+    build:
+      context: ./services/worker
+    restart: unless-stopped
+    networks: [deploy]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY}
+    volumes:
+      - secrets:/secrets:ro
+
+  ui:
+    image: ${REGISTRY:-localhost}/deployserver-ui:${TAG:-dev}
+    build:
+      context: ./services/ui
+    restart: unless-stopped
+    networks: [deploy]
+    environment:
+      PUBLIC_API_BASE: /api
+      PUBLIC_DEPLOY_FQDN: ${DEPLOY_FQDN}
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    networks: [deploy]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./services/http-boot/conf/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - ui
+      - auth-broker
+      - http-boot
+
+  # Optional in small-tier; only needed for the LAN-PXE secondary path.
+  # Comment out if you only deploy via USB bootstrap.
+  dnsmasq:
+    image: ${REGISTRY:-localhost}/deployserver-tftp:${TAG:-dev}
+    build:
+      context: ./services/tftp
+    restart: unless-stopped
+    network_mode: host
+    cap_add: [NET_ADMIN, NET_BIND_SERVICE]
+    profiles: ["lan-pxe"]
+    volumes:
+      - ./services/tftp/tftproot:/tftproot:ro
