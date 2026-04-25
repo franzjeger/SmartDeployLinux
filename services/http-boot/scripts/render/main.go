@@ -20,14 +20,34 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/your-org/deployserver/http-boot/internal/mtls"
 )
 
 func main() {
-	apiURL := getenv("API_INTERNAL_URL", "http://api:8080")
+	apiURL := getenv("API_INTERNAL_URL", "https://api:8443")
 	listen := getenv("RENDER_LISTEN", ":8444")
 
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	caPath := getenv("INTERNAL_CA_CERT_PATH", "/secrets/internal-ca.pem")
+	certPath := getenv("INTERNAL_TLS_CERT", "/secrets/http-boot.pem")
+	keyPath := getenv("INTERNAL_TLS_KEY", "/secrets/http-boot-key.pem")
+	if _, err := os.Stat(certPath); err == nil {
+		bundle, err := mtls.Load(caPath, certPath, keyPath)
+		if err != nil {
+			slog.Error("mtls load", "err", err)
+			os.Exit(2)
+		}
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: bundle.ClientConfig(),
+		}
+		slog.Info("mTLS to api enabled", "api", apiURL)
+	} else {
+		slog.Warn("INTERNAL_TLS_CERT not present; calling api in plaintext (dev-mode)")
+	}
+
 	r := chi.NewRouter()
-	h := &handlers{apiURL: apiURL, http: &http.Client{Timeout: 5 * time.Second}}
+	h := &handlers{apiURL: apiURL, http: httpClient}
 
 	r.Get("/render/by-token/{token}", h.renderIPXEByToken)
 	r.Get("/render/by-token/{token}/user-data", h.renderUserDataByToken)

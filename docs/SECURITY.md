@@ -60,7 +60,7 @@ limit by Source IP at L4 to absorb floods before they reach the app.
 ## 4. Known security gaps
 
 Real punch list, not aspirational. ✅ closed in Phase 9; ⏳ open.
-**5 of 8 closed as of Phase 9e.**
+**6 of 8 closed as of Phase 9f.**
 
 1. ✅ **`/boot/<id>.ipxe` was unauthenticated.** Closed in Phase 9a.
    Redeem now mints a `boot_token` (32-byte URL-safe random,
@@ -75,9 +75,22 @@ Real punch list, not aspirational. ✅ closed in Phase 9; ⏳ open.
    `winpe/scripts/{startnet,deploy}.cmd` now use
    `Authorization: Bearer %TOKEN%` and dropped `?token=` from URLs.
    Job ID stays in the URL path because routes already include it.
-3. ⏳ **No mTLS between API ↔ worker ↔ http-boot.** They share a
-   Docker network and trust it. Fix: generate per-service certs from
-   the internal CA, configure Go listeners with `tls.RequireAndVerifyClientCert`.
+3. ✅ **mTLS between API and http-boot.** Closed in Phase 9f.
+   `scripts/gen-internal-ca.sh` issues an internal CA + per-service
+   server/client certs into `secrets/`. The api opens a separate
+   `:8443` mTLS listener with `tls.RequireAndVerifyClientCert` against
+   the internal CA, hosting only `/internal/render/*` (called by
+   http-boot). http-boot's render Go service presents its client cert
+   when calling the api. Both services have an `mtls` package
+   (`api/internal/mtls`, `http-boot/internal/mtls`) with the loader and
+   server/client tls.Config helpers; api ships 3 tests including a
+   real-handshake round-trip with negative cases (no-cert and
+   foreign-CA both rejected at handshake). The public `/api/v1/*`
+   surface stays on `:8080` behind Caddy + OIDC because operator and
+   installer-phone-home callers can't present internal-CA certs. mTLS
+   for api↔auth-broker and api↔worker is the obvious next-extension —
+   neither currently calls the api over HTTP, so adding it is a small
+   delta when those calls land.
 4. ✅ **Audit log mirror.** Closed in Phase 9b. Both auth-broker and
    api now have an `auditlog.Open(path)` helper that returns a
    slog.Logger writing JSON to stdout AND (if `AUDIT_FILE` is set) to

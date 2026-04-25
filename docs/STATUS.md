@@ -166,13 +166,13 @@ top of doc for what would be required).
 3. Worker has no tests yet (Phase 10).
 
 ## Phase 9 — Security hardening
-**5 of 8 SECURITY.md §4 gaps closed.**
+**6 of 8 SECURITY.md §4 gaps closed.**
 
 | Gap | State |
 |---|---|
 | #1 `/boot/<id>.ipxe` unauthenticated | ✅ Closed (token-bound `/boot/<token>.ipxe`; Phase 9a) |
 | #2 token in query string for WinPE | ✅ Closed (`Authorization: Bearer`; Phase 9c) |
-| #3 mTLS between services | ⏳ Open |
+| #3 mTLS between services | ✅ Closed (api↔http-boot; Phase 9f) |
 | #4 audit log mirror to file/syslog | ✅ Closed (`auditlog.Open` fan-out; Phase 9b) |
 | #5 Headscale API key rotation | ⏳ Open |
 | #6 MOK private key HSM handling | ⏳ Open |

@@ -16,7 +16,8 @@ volumes:
   minio-data:
   caddy-data:
   caddy-config:
-  secrets:
+# Note: ./secrets/ is bind-mounted into each service. Generate it with
+# `make secrets` (one-time per deploy). It is gitignored.
 
 services:
 
@@ -81,6 +82,10 @@ services:
       minio:
         condition: service_healthy
     environment: &common-env
+      INTERNAL_TLS_CERT: /secrets/api.pem
+      INTERNAL_TLS_KEY: /secrets/api-key.pem
+      INTERNAL_CA_CERT_PATH: /secrets/internal-ca.pem
+      API_INTERNAL_LISTEN: ":8443"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER}
@@ -103,7 +108,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL}
       LOG_FORMAT: ${LOG_FORMAT}
     volumes:
-      - secrets:/secrets:ro
+      - ./secrets:/secrets:ro
 
   auth-broker:
     image: ${REGISTRY:-localhost}/deployserver-auth-broker:${TAG:-dev}
@@ -127,7 +132,7 @@ services:
       TAILSCALE_API_KEY: ${TAILSCALE_API_KEY}
       TAILSCALE_TAILNET: ${TAILSCALE_TAILNET}
     volumes:
-      - secrets:/secrets:ro
+      - ./secrets:/secrets:ro
 
   http-boot:
     image: ${REGISTRY:-localhost}/deployserver-http-boot:${TAG:-dev}
@@ -137,9 +142,11 @@ services:
     networks: [deploy]
     environment:
       <<: *common-env
-      API_INTERNAL_URL: http://api:8080
+      API_INTERNAL_URL: https://api:8443
+      INTERNAL_TLS_CERT: /secrets/http-boot.pem
+      INTERNAL_TLS_KEY: /secrets/http-boot-key.pem
     volumes:
-      - secrets:/secrets:ro
+      - ./secrets:/secrets:ro
 
   worker:
     image: ${REGISTRY:-localhost}/deployserver-worker:${TAG:-dev}
@@ -156,7 +163,7 @@ services:
       <<: *common-env
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY}
     volumes:
-      - secrets:/secrets:ro
+      - ./secrets:/secrets:ro
 
   ui:
     image: ${REGISTRY:-localhost}/deployserver-ui:${TAG:-dev}

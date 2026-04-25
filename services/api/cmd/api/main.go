@@ -19,6 +19,7 @@ import (
 
 	"github.com/your-org/deployserver/api/internal/auditlog"
 	"github.com/your-org/deployserver/api/internal/auth"
+	"github.com/your-org/deployserver/api/internal/mtls"
 	"github.com/your-org/deployserver/api/internal/store"
 )
 
@@ -79,6 +80,7 @@ func seedAdmin() {
 
 func serve() {
 	listen := getenv("API_LISTEN", ":8080")
+	internalListen := getenv("API_INTERNAL_LISTEN", ":8443")
 	publicURL := getenv("API_PUBLIC_URL", "https://deploy.example.com")
 	deployFQDN := getenv("DEPLOY_FQDN", "deploy.example.com")
 
@@ -124,41 +126,25 @@ func serve() {
 		verifier:   verifier,
 	}
 
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(slogMiddleware)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
+	// --- public router: phone-home + operator API + healthz -----------
+	pub := chi.NewRouter()
+	pub.Use(middleware.RequestID)
+	pub.Use(middleware.RealIP)
+	pub.Use(slogMiddleware)
+	pub.Use(middleware.Recoverer)
+	pub.Use(middleware.Timeout(30 * time.Second))
 
-	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	pub.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	// Internal endpoints called by http-boot. Not exposed externally.
-	r.Route("/internal/render", func(r chi.Router) {
-		// Token-based: the bootstrap and PXE chainload paths land here.
-		// URL contains a single-use, deployment-bound token; SECURITY.md §4 #1.
-		r.Get("/by-token/{token}", h.renderByToken)
-		r.Get("/by-token/{token}/user-data", h.renderUserDataByToken)
-		r.Get("/by-token/{token}/meta-data", h.renderMetaDataByToken)
-		// UUID-based: legacy. Will be retired; see STATUS.md.
-		r.Get("/machine/{id}", h.renderMachineByID)
-		r.Get("/by-mac/{mac}", h.renderMachineByMAC)
-		r.Get("/{id}/user-data", h.renderUserData)
-		r.Get("/{id}/meta-data", h.renderMetaData)
-	})
-
-	// Phone-home from installers. Auth: one-shot bearer token bound to
-	// a deployment_jobs row.
-	r.Route("/v1/jobs/{id}/events", func(r chi.Router) {
+	// Phone-home from in-OS installers (cross-WAN; bearer-token auth).
+	pub.Route("/v1/jobs/{id}/events", func(r chi.Router) {
 		r.Post("/", h.appendDeploymentEvent)
 	})
 
-	// WinPE per-job endpoints. Auth: Bearer token; state-gated to
-	// imaging/bootstrapped via Store.VerifyOneShotTokenForJob.
-	// SECURITY.md §4 #8.
-	r.Route("/v1/jobs/{id}", func(r chi.Router) {
+	// WinPE per-job endpoints. Bearer-token + state-gated.
+	pub.Route("/v1/jobs/{id}", func(r chi.Router) {
 		r.Get("/deploy.cmd", h.winpeDeployCmd)
 		r.Post("/plan", h.winpePlan)
 		r.Get("/image.wim", h.winpeImage)
@@ -166,8 +152,8 @@ func serve() {
 		r.Get("/unattend.xml", h.winpeUnattend)
 	})
 
-	// Public, OIDC-authenticated endpoints.
-	r.Route("/api/v1", func(r chi.Router) {
+	// Operator API (OIDC-authenticated).
+	pub.Route("/api/v1", func(r chi.Router) {
 		if h.verifier != nil {
 			r.Use(auth.Middleware(h.verifier))
 		}
@@ -177,26 +163,87 @@ func serve() {
 		r.Get("/audit", h.listAudit)
 	})
 
+	// --- internal router: render endpoints, called by http-boot only --
+	intr := chi.NewRouter()
+	intr.Use(middleware.RequestID)
+	intr.Use(middleware.RealIP)
+	intr.Use(slogMiddleware)
+	intr.Use(middleware.Recoverer)
+	intr.Use(middleware.Timeout(30 * time.Second))
+
+	intr.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	intr.Route("/internal/render", func(r chi.Router) {
+		r.Get("/by-token/{token}", h.renderByToken)
+		r.Get("/by-token/{token}/user-data", h.renderUserDataByToken)
+		r.Get("/by-token/{token}/meta-data", h.renderMetaDataByToken)
+		r.Get("/machine/{id}", h.renderMachineByID)
+		r.Get("/by-mac/{mac}", h.renderMachineByMAC)
+		r.Get("/{id}/user-data", h.renderUserData)
+		r.Get("/{id}/meta-data", h.renderMetaData)
+	})
+
 	srv := &http.Server{
 		Addr:              listen,
-		Handler:           r,
+		Handler:           pub,
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
+	// Internal listener with mTLS, if cert paths are configured. If not
+	// configured, fall back to mounting /internal/* on the public listener
+	// in plaintext — the dev-mode escape hatch matching the OIDC fallback.
+	// SECURITY.md §4 #3.
+	var internalSrv *http.Server
+	caPath := getenv("INTERNAL_CA_CERT_PATH", "/secrets/internal-ca.pem")
+	certPath := getenv("INTERNAL_TLS_CERT", "/secrets/api.pem")
+	keyPath := getenv("INTERNAL_TLS_KEY", "/secrets/api-key.pem")
+	if _, err := os.Stat(certPath); err == nil {
+		bundle, err := mtls.Load(caPath, certPath, keyPath)
+		if err != nil {
+			slog.Error("mtls load", "err", err)
+			os.Exit(2)
+		}
+		internalSrv = &http.Server{
+			Addr:              internalListen,
+			Handler:           intr,
+			TLSConfig:         bundle.ServerConfig(),
+			ReadHeaderTimeout: 5 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		slog.Info("internal mTLS listener configured", "addr", internalListen)
+	} else {
+		pub.Mount("/internal", intr)
+		slog.Warn("INTERNAL_TLS_CERT not present; /internal/* served plaintext on public listener (dev-mode)")
+	}
+
 	go func() {
-		slog.Info("api listening", "addr", listen, "version", version)
+		slog.Info("api public listening", "addr", listen, "version", version)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("listen", "err", err)
+			slog.Error("listen public", "err", err)
 			cancel()
 		}
 	}()
+	if internalSrv != nil {
+		go func() {
+			slog.Info("api internal listening (mTLS)", "addr", internalListen)
+			if err := internalSrv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("listen internal", "err", err)
+				cancel()
+			}
+		}()
+	}
 
 	<-ctx.Done()
 	shutdown, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 	_ = srv.Shutdown(shutdown)
+	if internalSrv != nil {
+		_ = internalSrv.Shutdown(shutdown)
+	}
 }
 
 func getenv(k, def string) string {

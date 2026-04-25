@@ -24,6 +24,9 @@ TAG                    ?= dev
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_.-]+:.*?## / {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
+secrets: ## Generate the internal CA + per-service certs (one-time).
+	bash scripts/gen-internal-ca.sh
+
 build: build-images build-bootstrap build-ipxe ## Build everything.
 
 build-images: ## Build all service container images.
@@ -79,5 +82,5 @@ clean:
 	$(MAKE) -C bootstrap clean
 	$(MAKE) -C ipxe clean
 
-.PHONY: help build build-images build-bootstrap build-ipxe up down logs \
+.PHONY: help secrets build build-images build-bootstrap build-ipxe up down logs \
         seed-admin migrate test test-unit test-e2e sec-scan clean
