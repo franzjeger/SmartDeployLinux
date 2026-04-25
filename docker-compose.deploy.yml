@@ -1,0 +1,44 @@
+# Deploy-host overlay. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d
+#
+# Tailored for an existing host that already runs nginx-proxy-manager
+# binding 80/443. We:
+#   - remove caddy (conflicts with NPM)
+#   - bind api's public listener to host port 8090 instead of behind caddy
+#   - keep auth-broker out of the default `up` until a Tailscale API key
+#     is configured (see profiles)
+#   - skip ui (nothing to serve yet)
+#   - skip minio (no blobs yet)
+#   - skip dnsmasq (host's LAN already has DHCP; LAN-PXE profile not used)
+
+services:
+
+  caddy:
+    profiles: ["with-caddy"]   # disabled by default
+
+  ui:
+    profiles: ["with-ui"]      # disabled by default
+
+  minio:
+    profiles: ["with-minio"]   # disabled by default
+
+  minio-init:
+    profiles: ["with-minio"]
+
+  auth-broker:
+    profiles: ["with-broker"]  # enable once TAILSCALE_API_KEY is set
+
+  dnsmasq:
+    profiles: ["lan-pxe"]      # already disabled by default
+
+  api:
+    ports:
+      - "18080:8080"           # public listener (8090-92 taken by librespeed/explorer/census)
+    environment:
+      DEPLOY_FQDN: ${DEPLOY_FQDN:-docker.tailb0b06a.ts.net}
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://docker.tailb0b06a.ts.net:18080}
+
+  http-boot:
+    # No host port — only reachable via the docker network.
+    environment:
+      API_INTERNAL_URL: https://api:8443

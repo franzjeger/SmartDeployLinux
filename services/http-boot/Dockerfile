@@ -10,17 +10,19 @@
 FROM golang:1.23.4-alpine AS gobuild
 WORKDIR /src
 RUN apk add --no-cache git
-COPY scripts/ ./scripts/
 COPY go.mod go.sum ./
 RUN go mod download
+COPY scripts/ ./scripts/
+COPY internal/ ./internal/
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath -ldflags="-s -w" \
     -o /out/render ./scripts/render
 
 FROM nginx:1.27-alpine
-RUN apk add --no-cache curl ca-certificates supervisor
+RUN apk add --no-cache curl ca-certificates tini
 COPY conf/nginx.conf /etc/nginx/nginx.conf
-COPY conf/supervisord.conf /etc/supervisord.conf
 COPY --from=gobuild /out/render /usr/local/bin/render
+COPY conf/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 EXPOSE 8443
-ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]

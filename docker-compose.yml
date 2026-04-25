@@ -79,8 +79,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+    # Note: api does NOT depend_on minio. The api uses minio only for
+    # blob fetches, which happen lazily; running without minio is a
+    # supported deploy mode (e.g. when blobs live in external S3 or are
+    # not yet ingested).
     environment: &common-env
       INTERNAL_TLS_CERT: /secrets/api.pem
       INTERNAL_TLS_KEY: /secrets/api-key.pem
@@ -156,8 +158,6 @@ services:
     networks: [deploy]
     depends_on:
       postgres:
-        condition: service_healthy
-      minio:
         condition: service_healthy
     environment:
       <<: *common-env
