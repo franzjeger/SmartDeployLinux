@@ -9,6 +9,7 @@ secrets/
 *.key
 *.crt
 *.cer
+*.srl
 bootstrap/keys/MOK.priv
 bootstrap/keys/MOK.crt
 bootstrap/keys/MOK.cer
