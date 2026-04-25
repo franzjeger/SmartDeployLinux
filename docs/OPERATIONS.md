@@ -113,6 +113,35 @@ least 1 year.
 | Auth-broker container compromise | EDR alerts; anomalous `headscale_authkey.minted` rate | Rotate Headscale API key; rebuild broker container; review audit | hours |
 | MinIO bucket public-mistake | Periodic config audit | Rotate any exposed creds; reissue any one-shot tokens that may have been observed | hours |
 
+## 5b. Headscale API key rotation
+
+The auth-broker carries a Headscale API key that authorizes minting
+ephemeral pre-auth keys for bootstrap nodes. Compromise of this key
+gives an attacker the ability to add tagged nodes to your tailnet.
+Rotate on a 30-90 day cadence.
+
+```sh
+# 1. Mint a new key (defaults to 90-day TTL).
+HEADSCALE_URL=https://headscale.example.com \
+HEADSCALE_API_KEY=<current> \
+  bash scripts/rotate-headscale-key.sh mint
+
+# Save the printed `key` field to your secret store.
+# Update HEADSCALE_API_KEY in the broker's environment.
+
+# 2. Restart broker; verify health.
+docker compose restart auth-broker
+curl -fsS https://$DEPLOY_FQDN/healthz
+
+# 3. Expire the OLD key (use prefix from the list output).
+HEADSCALE_API_KEY=<new> \
+  bash scripts/rotate-headscale-key.sh expire <old-key-prefix>
+```
+
+`scripts/rotate-headscale-key.sh list` shows all active keys with
+their prefixes and expirations. The Headscale API only returns the
+full key string on creation — capture it then.
+
 ## 6. CA rotation runbook
 
 See `docs/BOOTSTRAP.md §7` for the why; here are the commands:

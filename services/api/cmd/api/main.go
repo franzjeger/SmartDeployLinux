@@ -75,7 +75,33 @@ func runMigrate(args []string) {
 }
 
 func seedAdmin() {
-	slog.Info("seed-admin: not yet implemented (Phase 8e)")
+	// Usage: api seed-admin <email>
+	// First-run helper. Idempotent: rerunning with the same email is a
+	// no-op. Once the admin has logged in via OIDC at least once, the
+	// row's oidc_subject column is populated automatically by the
+	// resolver and from then on the admin gets full RBAC perms.
+	args := os.Args[2:]
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: api seed-admin <email>")
+		os.Exit(2)
+	}
+	email := args[0]
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st := openStore(ctx)
+	defer st.Close()
+	if err := st.MigrateUp(ctx); err != nil {
+		slog.Error("migrate", "err", err)
+		os.Exit(2)
+	}
+	id, err := st.SeedAdmin(ctx, email)
+	if err != nil {
+		slog.Error("seed admin", "err", err)
+		os.Exit(2)
+	}
+	fmt.Printf("admin user: %s (%s)\n", email, id)
+	fmt.Println("On first OIDC login from this email, the user will be linked to its oidc_subject and gain admin perms.")
 }
 
 func serve() {
@@ -160,7 +186,10 @@ func serve() {
 		r.Get("/machines", h.listMachines)
 		r.Post("/machines", h.createMachine)
 		r.Get("/machines/{id}", h.getMachine)
-		r.Get("/audit", h.listAudit)
+		r.Get("/audit", h.queryAudit)
+		r.Post("/deployments/issue", h.issueDeployment)
+		r.Post("/bootstrap-sticks", h.registerStick)
+		r.Get("/bootstrap-sticks", h.listSticks)
 	})
 
 	// --- internal router: render endpoints, called by http-boot only --

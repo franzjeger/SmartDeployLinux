@@ -334,48 +334,6 @@ func (h *handlers) getMachine(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, m)
 }
 
-// --- audit list --------------------------------------------------------
-
-func (h *handlers) listAudit(w http.ResponseWriter, r *http.Request) {
-	if !auth.HasPerm(r.Context(), "audit.read") {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-	rows, err := h.store.Pool().Query(r.Context(), `
-		SELECT id, at, actor_id, actor_kind, action, subject_id, subject_kind,
-		       data, source_ip::text
-		FROM audit_events ORDER BY id DESC LIMIT 200`)
-	if err != nil {
-		http.Error(w, "internal", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-	type ev struct {
-		ID         int64           `json:"id"`
-		At         string          `json:"at"`
-		ActorID    *uuid.UUID      `json:"actor_id"`
-		ActorKind  string          `json:"actor_kind"`
-		Action     string          `json:"action"`
-		SubjectID  *uuid.UUID      `json:"subject_id"`
-		SubjectKnd string          `json:"subject_kind"`
-		Data       json.RawMessage `json:"data"`
-		SourceIP   *string         `json:"source_ip"`
-	}
-	var out []ev
-	for rows.Next() {
-		var e ev
-		var at = ""
-		if err := rows.Scan(&e.ID, &at, &e.ActorID, &e.ActorKind, &e.Action,
-			&e.SubjectID, &e.SubjectKnd, &e.Data, &e.SourceIP); err != nil {
-			http.Error(w, "internal", http.StatusInternalServerError)
-			return
-		}
-		e.At = at
-		out = append(out, e)
-	}
-	writeJSON(w, 200, out)
-}
-
 // --- phone-home --------------------------------------------------------
 
 type appendEventReq struct {

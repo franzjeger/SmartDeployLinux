@@ -60,7 +60,7 @@ limit by Source IP at L4 to absorb floods before they reach the app.
 ## 4. Known security gaps
 
 Real punch list, not aspirational. ✅ closed in Phase 9; ⏳ open.
-**6 of 8 closed as of Phase 9f.**
+**8 of 8 closed as of Phase 9h.**
 
 1. ✅ **`/boot/<id>.ipxe` was unauthenticated.** Closed in Phase 9a.
    Redeem now mints a `boot_token` (32-byte URL-safe random,
@@ -97,11 +97,53 @@ Real punch list, not aspirational. ✅ closed in Phase 9; ⏳ open.
    an append-only file. The file is the durable mirror that survives
    Postgres compromise. Operator mounts a volume on `AUDIT_FILE`'s
    parent dir and backs it up separately.
-5. ⏳ **Headscale API key is a long-lived bearer.** Rotate on a
-   30-day cadence; integrate with Vault if available.
-6. ⏳ **MOK private key handling.** `bootstrap/keys/MOK.priv` is a
-   filesystem file. Document HSM / signing-server pattern for
-   production.
+5. ✅ **Headscale API key rotation.** Closed in Phase 9g.
+   `scripts/rotate-headscale-key.sh` automates the mint + list + expire
+   operations against Headscale's `/api/v1/apikey` endpoint. Recommended
+   cadence: every 30–90 days. The full procedure (mint → update broker
+   env → restart → verify → expire old) is documented in
+   `docs/OPERATIONS.md §"Headscale key rotation"`. Vault integration
+   is left as a follow-on: the rotation script writes the new key to
+   stdout; the operator pipes it into Vault (or any secret store) and
+   updates the broker's env from there.
+6. ✅ **MOK private key on HSM.** Closed in Phase 9h with
+   documentation. The default `bootstrap/keys/gen-mok.sh` flow generates
+   a filesystem-resident key suitable for lab and small-deploy use. For
+   production, use a YubiKey 5 (or any PKCS#11-capable HSM) as the
+   signing key and never let the private key touch a filesystem.
+
+   **YubiKey + sbsign procedure (production-recommended):**
+
+   ```sh
+   # One-time per YubiKey. Generates an RSA-2048 keypair on the device's
+   # signing slot 9c and emits the public-key cert (the MOK.cer to enroll
+   # via shim/MokManager).
+   yubico-piv-tool -a generate -s 9c -A RSA2048
+   yubico-piv-tool -a verify-pin -a selfsign-certificate -s 9c \
+       -S '/CN=deployserver MOK' -i pub.pem -o MOK.cer
+   yubico-piv-tool -a import-certificate -s 9c -i MOK.cer
+
+   # On every grub.efi / kernel build, sign via the YubiKey instead of
+   # an on-disk key:
+   sbsign --engine pkcs11 \
+       --key 'pkcs11:object=PIV%20AUTH%20key;type=private' \
+       --cert /path/to/MOK.cer \
+       --output grubx64.efi.signed grubx64.efi
+   ```
+
+   The PKCS#11 module is provided by `opensc` or `yubico-piv-tool`'s
+   library. Your build host needs `libengine-pkcs11-openssl`. The
+   YubiKey PIN is required at signing time — operationally this is
+   either typed by an operator or provided via PIN cache during a
+   batched build session.
+
+   For higher-tier deployments (a signing server with a network HSM
+   like AWS CloudHSM or YubiHSM2), the same pattern applies; only the
+   PKCS#11 URI changes. Never automate PIN entry into CI logs.
+
+   `bootstrap/external/fetch.sh`'s sbsign call is the integration point;
+   replace its `--key bootstrap/keys/MOK.priv` with the PKCS#11 URI
+   when running in HSM mode.
 7. ✅ **Per-operator issue-code rate limit.** Closed in Phase 9d.
    `auth-broker.handleIssueCode` calls `Store.CountIssuedByActorRecently`
    and returns 429 when the operator has exceeded

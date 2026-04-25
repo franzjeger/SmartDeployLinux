@@ -471,7 +471,205 @@ func (s *Store) VerifyOneShotToken(ctx context.Context, tokenHash string, fromIP
 	return jobID, nil
 }
 
+// --- bootstrap sticks inventory --------------------------------------
+
+type BootstrapStick struct {
+	ID            uuid.UUID
+	ImageSHA256   string
+	Tailnet       string
+	DeployURL     string
+	CAFingerprint string
+	BuiltBy       uuid.UUID
+	BuiltAt       time.Time
+	Label         *string
+	RetiredAt     *time.Time
+}
+
+type CreateStickInput struct {
+	ImageSHA256   string
+	Tailnet       string
+	DeployURL     string
+	CAFingerprint string
+	BuiltBy       uuid.UUID
+	Label         *string
+}
+
+func (s *Store) CreateBootstrapStick(ctx context.Context, in CreateStickInput) (*BootstrapStick, error) {
+	if in.ImageSHA256 == "" || in.Tailnet == "" || in.DeployURL == "" || in.CAFingerprint == "" {
+		return nil, errors.New("image_sha256/tailnet/deploy_url/ca_fingerprint required")
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO bootstrap_sticks (image_sha256, tailnet, deploy_url, ca_fingerprint, built_by, label)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id`,
+		in.ImageSHA256, in.Tailnet, in.DeployURL, in.CAFingerprint, in.BuiltBy, in.Label).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetBootstrapStick(ctx, id)
+}
+
+func (s *Store) GetBootstrapStick(ctx context.Context, id uuid.UUID) (*BootstrapStick, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, image_sha256, tailnet, deploy_url, ca_fingerprint,
+		       built_by, built_at, label, retired_at
+		FROM bootstrap_sticks WHERE id = $1`, id)
+	var b BootstrapStick
+	if err := row.Scan(&b.ID, &b.ImageSHA256, &b.Tailnet, &b.DeployURL,
+		&b.CAFingerprint, &b.BuiltBy, &b.BuiltAt, &b.Label, &b.RetiredAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &b, nil
+}
+
+// ListBootstrapSticks returns sticks ordered by built_at desc. caFingerprint
+// optional — when set, only sticks with that fingerprint are returned (used
+// for CA rotation inventory).
+func (s *Store) ListBootstrapSticks(ctx context.Context, caFingerprint string, limit int) ([]BootstrapStick, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	var rows pgx.Rows
+	var err error
+	if caFingerprint != "" {
+		rows, err = s.pool.Query(ctx, `
+			SELECT id, image_sha256, tailnet, deploy_url, ca_fingerprint,
+			       built_by, built_at, label, retired_at
+			FROM bootstrap_sticks
+			WHERE ca_fingerprint = $1
+			ORDER BY built_at DESC
+			LIMIT $2`, caFingerprint, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, `
+			SELECT id, image_sha256, tailnet, deploy_url, ca_fingerprint,
+			       built_by, built_at, label, retired_at
+			FROM bootstrap_sticks
+			ORDER BY built_at DESC
+			LIMIT $1`, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []BootstrapStick
+	for rows.Next() {
+		var b BootstrapStick
+		if err := rows.Scan(&b.ID, &b.ImageSHA256, &b.Tailnet, &b.DeployURL,
+			&b.CAFingerprint, &b.BuiltBy, &b.BuiltAt, &b.Label, &b.RetiredAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // --- audit -----------------------------------------------------------
+
+type AuditQueryFilters struct {
+	Since    time.Duration // 0 = no since filter
+	ActionLike string       // SQL LIKE pattern; empty = no filter
+	MachineID  *uuid.UUID
+	Limit      int
+}
+
+type AuditRow struct {
+	ID          int64
+	At          time.Time
+	ActorID     *uuid.UUID
+	ActorKind   string
+	Action      string
+	SubjectID   *uuid.UUID
+	SubjectKind *string
+	Data        []byte
+	SourceIP    *string
+}
+
+// QueryAuditEvents runs a filtered audit query. The CLI's
+// `deployctl audit query --since X --action Y --machine Z` lands here.
+func (s *Store) QueryAuditEvents(ctx context.Context, f AuditQueryFilters) ([]AuditRow, error) {
+	if f.Limit <= 0 || f.Limit > 1000 {
+		f.Limit = 200
+	}
+	q := `SELECT id, at, actor_id, actor_kind, action, subject_id, subject_kind,
+	             data, source_ip::text
+	      FROM audit_events
+	      WHERE 1=1`
+	args := []any{}
+	if f.Since > 0 {
+		q += fmt.Sprintf(" AND at > now() - $%d::interval", len(args)+1)
+		args = append(args, fmt.Sprintf("%d seconds", int(f.Since.Seconds())))
+	}
+	if f.ActionLike != "" {
+		q += fmt.Sprintf(" AND action LIKE $%d", len(args)+1)
+		args = append(args, f.ActionLike)
+	}
+	if f.MachineID != nil {
+		// Match either subject_id or any "machine_id" key inside data.
+		q += fmt.Sprintf(" AND (subject_id = $%d OR data->>'machine_id' = $%d::text)",
+			len(args)+1, len(args)+2)
+		args = append(args, *f.MachineID, *f.MachineID)
+	}
+	q += fmt.Sprintf(" ORDER BY id DESC LIMIT $%d", len(args)+1)
+	args = append(args, f.Limit)
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditRow
+	for rows.Next() {
+		var r AuditRow
+		if err := rows.Scan(&r.ID, &r.At, &r.ActorID, &r.ActorKind, &r.Action,
+			&r.SubjectID, &r.SubjectKind, &r.Data, &r.SourceIP); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GetUserByOIDCSub returns the local user row for an OIDC subject claim,
+// or ErrNotFound if not yet seen.
+func (s *Store) GetUserByOIDCSub(ctx context.Context, sub string) (uuid.UUID, error) {
+	var id uuid.UUID
+	row := s.pool.QueryRow(ctx, `SELECT id FROM users WHERE oidc_subject = $1`, sub)
+	if err := row.Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, err
+	}
+	return id, nil
+}
+
+// SeedAdmin upserts a user row by email and assigns the admin role.
+// Returns the user id. Used by `api seed-admin` for first-run setup.
+func (s *Store) SeedAdmin(ctx context.Context, email string) (uuid.UUID, error) {
+	if email == "" {
+		return uuid.Nil, errors.New("email required")
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO users (email)
+		VALUES ($1)
+		ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+		RETURNING id`, email).Scan(&id)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id)
+		VALUES ($1, '00000000-0000-0000-0000-000000000001')
+		ON CONFLICT DO NOTHING`, id); err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
+}
 
 func (s *Store) Audit(ctx context.Context, ev AuditEvent) error {
 	_, err := s.pool.Exec(ctx, `

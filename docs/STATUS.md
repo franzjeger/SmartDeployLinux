@@ -166,7 +166,7 @@ top of doc for what would be required).
 3. Worker has no tests yet (Phase 10).
 
 ## Phase 9 — Security hardening
-**6 of 8 SECURITY.md §4 gaps closed.**
+**8 of 8 SECURITY.md §4 gaps closed.**
 
 | Gap | State |
 |---|---|
@@ -174,8 +174,8 @@ top of doc for what would be required).
 | #2 token in query string for WinPE | ✅ Closed (`Authorization: Bearer`; Phase 9c) |
 | #3 mTLS between services | ✅ Closed (api↔http-boot; Phase 9f) |
 | #4 audit log mirror to file/syslog | ✅ Closed (`auditlog.Open` fan-out; Phase 9b) |
-| #5 Headscale API key rotation | ⏳ Open |
-| #6 MOK private key HSM handling | ⏳ Open |
+| #5 Headscale API key rotation | ✅ Closed (`scripts/rotate-headscale-key.sh` + OPERATIONS.md procedure; Phase 9g) |
+| #6 MOK private key HSM handling | ✅ Closed (YubiKey + PKCS#11 + sbsign documented in SECURITY.md §4 #6; Phase 9h) |
 | #7 per-operator issue rate limit | ✅ Closed (Phase 9d) |
 | #8 plan/wim fetch replay protection | ✅ Closed (per-job state-gated WinPE endpoints; Phase 9e) |
 

@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"os"
 	"strings"
@@ -437,6 +438,128 @@ func TestVerifyOneShotTokenForJob_StateGated(t *testing.T) {
 	}
 	if _, _, err := st.VerifyOneShotTokenForJob(ctx, "sha256:winpe", jobID); err == nil {
 		t.Fatal("expected error after completed transition")
+	}
+}
+
+func TestBootstrapSticks_CreateAndList(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	var u uuid.UUID
+	must(t, st.Pool().QueryRow(ctx,
+		`INSERT INTO users (email) VALUES ('stickbuilder@example.com') RETURNING id`,
+	).Scan(&u))
+
+	caFP := "AB:CD:EF:01:23:45"
+	for i := 0; i < 3; i++ {
+		_, err := st.CreateBootstrapStick(ctx, CreateStickInput{
+			ImageSHA256:   randSHA(t),
+			Tailnet:       "acme.headscale.example.com",
+			DeployURL:     "https://deploy.acme.example.com",
+			CAFingerprint: caFP,
+			BuiltBy:       u,
+		})
+		must(t, err)
+	}
+	// Add one with a different CA fingerprint to test the filter.
+	_, err := st.CreateBootstrapStick(ctx, CreateStickInput{
+		ImageSHA256:   randSHA(t),
+		Tailnet:       "acme.headscale.example.com",
+		DeployURL:     "https://deploy.acme.example.com",
+		CAFingerprint: "DEAD:BEEF",
+		BuiltBy:       u,
+	})
+	must(t, err)
+
+	all, err := st.ListBootstrapSticks(ctx, "", 100)
+	must(t, err)
+	if len(all) != 4 {
+		t.Fatalf("expected 4 sticks, got %d", len(all))
+	}
+
+	filtered, err := st.ListBootstrapSticks(ctx, caFP, 100)
+	must(t, err)
+	if len(filtered) != 3 {
+		t.Fatalf("expected 3 with caFP=%s, got %d", caFP, len(filtered))
+	}
+	for _, s := range filtered {
+		if s.CAFingerprint != caFP {
+			t.Errorf("filter leak: stick %s has CA %s", s.ID, s.CAFingerprint)
+		}
+	}
+}
+
+func TestQueryAuditEvents_Filters(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	var u uuid.UUID
+	must(t, st.Pool().QueryRow(ctx,
+		`INSERT INTO users (email) VALUES ('aud@example.com') RETURNING id`,
+	).Scan(&u))
+
+	mid := uuid.New()
+	otherMid := uuid.New()
+	mustAudit := func(action string, machine *uuid.UUID, ageSec int) {
+		var data string
+		if machine != nil {
+			data = fmt.Sprintf(`{"machine_id":"%s"}`, machine.String())
+		} else {
+			data = `{}`
+		}
+		_, err := st.Pool().Exec(ctx, `
+			INSERT INTO audit_events (actor_id, actor_kind, action, data, at)
+			VALUES ($1, 'user', $2, $3::jsonb, now() - ($4 || ' seconds')::interval)`,
+			u, action, data, fmt.Sprintf("%d", ageSec))
+		must(t, err)
+	}
+	mustAudit("auth_code.issued", &mid, 0)
+	mustAudit("auth_code.redeemed", &mid, 30)
+	mustAudit("auth_code.redeemed", &otherMid, 0)
+	mustAudit("machine.created", &mid, 0)
+	mustAudit("auth_code.issued", &mid, 7200) // 2h ago, outside since=1h
+
+	// since=1h: drops the 2h-old row (4 left).
+	res, err := st.QueryAuditEvents(ctx, AuditQueryFilters{Since: time.Hour})
+	must(t, err)
+	if len(res) != 4 {
+		t.Errorf("since=1h expected 4, got %d", len(res))
+	}
+
+	// action LIKE auth_code%: 3 (two redeemed, one issued in window), excluding machine.created.
+	res, err = st.QueryAuditEvents(ctx, AuditQueryFilters{Since: time.Hour, ActionLike: "auth_code%"})
+	must(t, err)
+	if len(res) != 3 {
+		t.Errorf("action=auth_code%% expected 3, got %d", len(res))
+	}
+
+	// machine filter: only events with this machine in subject_id or data.machine_id.
+	res, err = st.QueryAuditEvents(ctx, AuditQueryFilters{Since: time.Hour, MachineID: &mid})
+	must(t, err)
+	if len(res) != 3 {
+		t.Errorf("machine filter expected 3, got %d", len(res))
+	}
+}
+
+func TestSeedAdmin_Idempotent(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	id1, err := st.SeedAdmin(ctx, "first-admin@example.com")
+	must(t, err)
+	id2, err := st.SeedAdmin(ctx, "first-admin@example.com")
+	must(t, err)
+	if id1 != id2 {
+		t.Fatalf("not idempotent: %s vs %s", id1, id2)
+	}
+	// Verify the role assignment exists exactly once.
+	var n int
+	must(t, st.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM user_roles WHERE user_id = $1
+		 AND role_id = '00000000-0000-0000-0000-000000000001'`, id1,
+	).Scan(&n))
+	if n != 1 {
+		t.Fatalf("expected exactly 1 admin role row, got %d", n)
 	}
 }
 

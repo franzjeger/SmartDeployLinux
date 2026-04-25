@@ -48,8 +48,10 @@ func deploymentsIssue(args []string) {
 		body["binding_cidr"] = *bindingCIDR
 	}
 
-	// The auth-broker is the issuer. The CLI hits the API which forwards.
-	// In v1 we hit the broker directly via the public Caddy route.
+	// /api/v1/deployments/issue is the OIDC-protected operator endpoint
+	// on the api service. The api injects issued_by from the verified
+	// principal and forwards to auth-broker, which mints the code and
+	// rate-limits per operator.
 	c, err := client.New()
 	if err != nil {
 		die(err)
@@ -58,7 +60,7 @@ func deploymentsIssue(args []string) {
 		Code      string `json:"code"`
 		ExpiresAt string `json:"expires_at"`
 	}
-	if err := c.Do("POST", "/api/v1/bootstrap/issue-code", body, &out); err != nil {
+	if err := c.Do("POST", "/api/v1/deployments/issue", body, &out); err != nil {
 		die(err)
 	}
 	fmt.Printf("Code:        %s\nExpires:     %s\n", out.Code, out.ExpiresAt)
