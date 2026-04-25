@@ -60,6 +60,7 @@ limit by Source IP at L4 to absorb floods before they reach the app.
 ## 4. Known security gaps
 
 Real punch list, not aspirational. ✅ closed in Phase 9; ⏳ open.
+**5 of 8 closed as of Phase 9e.**
 
 1. ✅ **`/boot/<id>.ipxe` was unauthenticated.** Closed in Phase 9a.
    Redeem now mints a `boot_token` (32-byte URL-safe random,
@@ -93,12 +94,17 @@ Real punch list, not aspirational. ✅ closed in Phase 9; ⏳ open.
    and returns 429 when the operator has exceeded
    `AUTH_BROKER_RATE_LIMIT_ISSUE_PER_OPERATOR_PER_HOUR` (default 100).
    Caps blast radius of a compromised admin account.
-8. ⏳ **Replay protection on plan/wim fetches after deployment finishes.**
-   Partly addressed: `TransitionJob` to terminal state now marks all
-   boot tokens for that auth_code consumed. The per-job WinPE endpoints
-   (`/v1/jobs/{id}/plan`, `/v1/jobs/{id}/image.wim`, etc.) are not yet
-   implemented; when added, they must reject calls when the job is no
-   longer in `imaging`/`bootstrapped` state.
+8. ✅ **Replay protection on plan/wim fetches.** Closed in Phase 9e.
+   Per-job WinPE endpoints (`/v1/jobs/{id}/{deploy.cmd,plan,image.wim,
+   drivers.zip,unattend.xml}`) implemented in
+   `services/api/cmd/api/winpe.go`. All require `Authorization: Bearer
+   <one-shot-token>` and use `Store.VerifyOneShotTokenForJob`, which
+   rejects the call if (a) the token is unknown/expired/consumed,
+   (b) the token is not bound to the URL's job id, or (c) the job is no
+   longer in `bootstrapped`/`imaging` state. Terminal-state transitions
+   (`completed`/`failed`/`cancelled`) call
+   `Store.MarkBootTokensConsumedForJob` to revoke the boot token, so
+   even a leaked token can't be replayed against a finished deployment.
 
 ## 5. Audit log
 

@@ -424,6 +424,32 @@ func (s *Store) GetJobOneShotToken(ctx context.Context, jobID uuid.UUID, purpose
 	return id, nil
 }
 
+// VerifyOneShotTokenForJob is the non-consuming check used by per-job
+// WinPE endpoints (plan, image.wim, drivers.zip, unattend.xml). The
+// install needs to fetch these multiple times across the run, so we do
+// NOT consume — instead we only check that the token is still valid
+// AND the job is in a non-terminal imaging state. Returns the job's
+// machine_id and profile_id on success.
+func (s *Store) VerifyOneShotTokenForJob(ctx context.Context, tokenHash string, jobID uuid.UUID) (machineID, profileID uuid.UUID, err error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT j.machine_id, j.profile_id
+		FROM one_shot_tokens t
+		JOIN deployment_jobs j ON j.auth_code_id = t.auth_code_id
+		WHERE t.token_hash = $1
+		  AND t.purpose IN ('boot','phone-home')
+		  AND t.consumed_at IS NULL
+		  AND t.expires_at > now()
+		  AND j.id = $2
+		  AND j.state IN ('bootstrapped','imaging')`, tokenHash, jobID)
+	if err := row.Scan(&machineID, &profileID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, uuid.Nil, ErrTokenInvalid
+		}
+		return uuid.Nil, uuid.Nil, err
+	}
+	return machineID, profileID, nil
+}
+
 // VerifyOneShotToken atomically marks a token consumed and returns the
 // job_id it was bound to. The caller passes the *hashed* token.
 func (s *Store) VerifyOneShotToken(ctx context.Context, tokenHash string, fromIP netip.Addr) (jobID uuid.UUID, err error) {

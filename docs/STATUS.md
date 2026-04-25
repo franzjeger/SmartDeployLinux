@@ -166,7 +166,7 @@ top of doc for what would be required).
 3. Worker has no tests yet (Phase 10).
 
 ## Phase 9 — Security hardening
-**4 of 8 SECURITY.md §4 gaps closed in this checkout.**
+**5 of 8 SECURITY.md §4 gaps closed.**
 
 | Gap | State |
 |---|---|
@@ -177,7 +177,7 @@ top of doc for what would be required).
 | #5 Headscale API key rotation | ⏳ Open |
 | #6 MOK private key HSM handling | ⏳ Open |
 | #7 per-operator issue rate limit | ✅ Closed (Phase 9d) |
-| #8 plan/wim fetch replay protection | ⏳ Partially open (boot tokens revoked on terminal state; per-job WinPE endpoints not yet implemented) |
+| #8 plan/wim fetch replay protection | ✅ Closed (per-job state-gated WinPE endpoints; Phase 9e) |
 
 ### Phase-9 net new code
 

@@ -155,6 +155,17 @@ func serve() {
 		r.Post("/", h.appendDeploymentEvent)
 	})
 
+	// WinPE per-job endpoints. Auth: Bearer token; state-gated to
+	// imaging/bootstrapped via Store.VerifyOneShotTokenForJob.
+	// SECURITY.md §4 #8.
+	r.Route("/v1/jobs/{id}", func(r chi.Router) {
+		r.Get("/deploy.cmd", h.winpeDeployCmd)
+		r.Post("/plan", h.winpePlan)
+		r.Get("/image.wim", h.winpeImage)
+		r.Get("/drivers.zip", h.winpeDrivers)
+		r.Get("/unattend.xml", h.winpeUnattend)
+	})
+
 	// Public, OIDC-authenticated endpoints.
 	r.Route("/api/v1", func(r chi.Router) {
 		if h.verifier != nil {

@@ -1,0 +1,124 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: build / vet / test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.6-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    strategy:
+      matrix:
+        service:
+          - auth-broker
+          - api
+          - http-boot
+          - edge-agent
+          - worker
+          - deployctl
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.4'
+          cache: true
+          cache-dependency-path: services/${{ matrix.service }}/go.sum
+
+      - name: go mod download
+        working-directory: services/${{ matrix.service }}
+        run: go mod download
+
+      - name: go build
+        working-directory: services/${{ matrix.service }}
+        run: go build ./...
+
+      - name: go vet
+        working-directory: services/${{ matrix.service }}
+        run: go vet ./...
+
+      - name: go test
+        working-directory: services/${{ matrix.service }}
+        env:
+          # Only the api module has integration tests that require this.
+          # Other modules ignore the env var.
+          DEPLOY_TEST_PG_DSN: postgres://test:test@127.0.0.1:5432/test?sslmode=disable
+        run: go test ./... -count=1
+
+  shell:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: syntax-check shell scripts
+        run: |
+          set -euo pipefail
+          for f in $(git ls-files | grep -E '\.(sh)$|^bootstrap/overlay/etc/init\.d/|^bootstrap/overlay/usr/local/bin/'); do
+            if head -n1 "$f" | grep -q bash; then
+              bash -n "$f"
+            else
+              sh -n "$f"
+            fi
+            echo "ok: $f"
+          done
+      - name: shellcheck (advisory)
+        # Don't fail the build on style warnings; this is informational.
+        continue-on-error: true
+        run: |
+          for f in $(git ls-files '*.sh'); do
+            shellcheck -S warning "$f" || true
+          done
+
+  sql:
+    name: migration applies
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.6-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: apply migration
+        env:
+          PGPASSWORD: test
+        run: |
+          psql -h 127.0.0.1 -U test -d test -v ON_ERROR_STOP=1 \
+            -f services/api/internal/store/migrations/0001_init.sql
+          psql -h 127.0.0.1 -U test -d test -c '\dt' | tee /tmp/tables.txt
+          n=$(grep -c 'public ' /tmp/tables.txt || true)
+          if [ "$n" -lt 21 ]; then
+            echo "expected 21 tables, found $n"
+            exit 1
+          fi

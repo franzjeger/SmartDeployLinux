@@ -378,6 +378,68 @@ func TestLookupRenderBundleByToken_AndConsume(t *testing.T) {
 	}
 }
 
+func TestVerifyOneShotTokenForJob_StateGated(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	var profile uuid.UUID
+	mustImageProfile(t, st, "img-state", "prof-state", &profile)
+	tag := "lab-state"
+	m, err := st.CreateMachine(ctx, CreateMachineInput{
+		AssetTag: &tag, DefaultProfileID: &profile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var userID uuid.UUID
+	must(t, st.Pool().QueryRow(ctx, `
+		INSERT INTO users (email) VALUES ('state@example.com')
+		RETURNING id`).Scan(&userID))
+
+	var authCodeID, jobID uuid.UUID
+	must(t, st.Pool().QueryRow(ctx, `
+		INSERT INTO auth_codes (code_hash, machine_id, profile_id, issued_by, expires_at)
+		VALUES ('codehash-st', $1, $2, $3, now() + '1h'::interval)
+		RETURNING id`, m.ID, profile, userID).Scan(&authCodeID))
+	must(t, st.Pool().QueryRow(ctx, `
+		INSERT INTO one_shot_tokens (auth_code_id, token_hash, purpose, expires_at)
+		VALUES ($1, 'sha256:winpe', 'boot', now() + '1h'::interval)
+		RETURNING id`, authCodeID).Scan(new(uuid.UUID)))
+	must(t, st.Pool().QueryRow(ctx, `
+		INSERT INTO deployment_jobs (machine_id, profile_id, auth_code_id, state)
+		VALUES ($1, $2, $3, 'imaging') RETURNING id`,
+		m.ID, profile, authCodeID).Scan(&jobID))
+
+	// Imaging state: verify succeeds.
+	mID, pID, err := st.VerifyOneShotTokenForJob(ctx, "sha256:winpe", jobID)
+	if err != nil {
+		t.Fatalf("imaging-state verify: %v", err)
+	}
+	if mID != m.ID || pID != profile {
+		t.Fatalf("returned wrong ids: m=%s p=%s expected m=%s p=%s",
+			mID, pID, m.ID, profile)
+	}
+
+	// Wrong job id is rejected.
+	if _, _, err := st.VerifyOneShotTokenForJob(ctx, "sha256:winpe", uuid.New()); err == nil {
+		t.Fatal("expected error for wrong job id")
+	}
+
+	// Bogus token is rejected.
+	if _, _, err := st.VerifyOneShotTokenForJob(ctx, "sha256:nope", jobID); err == nil {
+		t.Fatal("expected error for bogus token")
+	}
+
+	// Transition to completed should revoke the token AND make the
+	// state-gate refuse new fetches even if the token were still alive.
+	if err := st.TransitionJob(ctx, jobID, "completed"); err != nil {
+		t.Fatalf("transition: %v", err)
+	}
+	if _, _, err := st.VerifyOneShotTokenForJob(ctx, "sha256:winpe", jobID); err == nil {
+		t.Fatal("expected error after completed transition")
+	}
+}
+
 func TestReapAndLock(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
