@@ -37,6 +37,18 @@ ipxe/src/
 /tmp/
 **/vendor/
 
+# Compiled service binaries — `go build ./...` from a service dir drops
+# the binary as ./<basename>. These should not live in the source tree.
+services/edge-agent/edge-agent
+services/worker/worker
+services/http-boot/render
+services/api/api
+services/auth-broker/auth-broker
+services/deployctl/deployctl
+
+# Claude Code local settings (per-user, not shared)
+.claude/settings.local.json
+
 # Editor / OS noise
 .DS_Store
 Thumbs.db
