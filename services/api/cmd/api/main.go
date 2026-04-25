@@ -164,6 +164,28 @@ func serve() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
+	// Friendly index so a browser hit on `/` doesn't 404. Operators
+	// usually open the URL out of curiosity; give them something
+	// orientating rather than a chi default-404.
+	pub.Get("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html>
+<html><head><meta charset="utf-8"><title>deployserver</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;max-width:60ch;margin:3em auto;padding:0 1em;color:#222}
+code{background:#f4f4f4;padding:.1em .3em;border-radius:3px}h1{margin-bottom:0}p{margin-top:.3em}
+</style></head><body>
+<h1>deployserver</h1>
+<p>SmartdeployLinux API — <a href="/healthz">/healthz</a></p>
+<ul>
+<li><code>/api/v1/...</code> — operator API (OIDC-protected)</li>
+<li><code>/v1/jobs/{id}/events</code> — installer phone-home (bearer)</li>
+<li><code>/v1/jobs/{id}/{deploy.cmd,plan,image.wim,drivers.zip,unattend.xml}</code> — WinPE per-job (bearer)</li>
+<li><code>/internal/render/...</code> — http-boot renderer (mTLS, internal listener only)</li>
+</ul>
+<p>Source: <a href="https://github.com/franzjeger/SmartDeployLinux">github.com/franzjeger/SmartDeployLinux</a></p>
+</body></html>`))
+	})
+
 	// Phone-home from in-OS installers (cross-WAN; bearer-token auth).
 	pub.Route("/v1/jobs/{id}/events", func(r chi.Router) {
 		r.Post("/", h.appendDeploymentEvent)
