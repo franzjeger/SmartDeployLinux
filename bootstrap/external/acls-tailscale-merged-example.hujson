@@ -1,0 +1,48 @@
+// SmartdeployLinux ACL — Tailscale `grants`-format merge.
+//
+// This is a complete drop-in for the Tailscale admin ACL editor at
+// https://login.tailscale.com/admin/acls/file
+//
+// Diff vs. Tailscale's default permissive starter:
+//   + tagOwners block (4 deploy-* tags)
+//   + autoApprovers block (RFC1918 routes for tag:deploy-edge)
+//   No other changes; the wildcard grant and the SSH block are unchanged.
+
+{
+    // Define the tags which can be applied to devices and by which users.
+    "tagOwners": {
+        "tag:deploy-server":    ["autogroup:admin"],
+        "tag:deploy-bootstrap": ["autogroup:admin"],
+        "tag:deploy-target":    ["autogroup:admin"],
+        "tag:deploy-edge":      ["autogroup:admin"],
+    },
+
+    // Define grants that govern access for users, groups, autogroups, tags,
+    // Tailscale IP addresses, and subnet ranges.
+    "grants": [
+        // Allow all connections.
+        // Comment this section out if you want to define specific restrictions.
+        {"src": ["*"], "dst": ["*"], "ip": ["*"]},
+    ],
+
+    // SmartDeploy: edge-agent boxes (tag:deploy-edge) at remote sites
+    // advertise their LAN as a tailnet subnet route so the deploy server
+    // can reach LAN-side targets. Limited to RFC1918 ranges.
+    "autoApprovers": {
+        "routes": {
+            "10.0.0.0/8":     ["tag:deploy-edge"],
+            "192.168.0.0/16": ["tag:deploy-edge"],
+            "172.16.0.0/12":  ["tag:deploy-edge"],
+        },
+    },
+
+    // Define users and devices that can use Tailscale SSH.
+    "ssh": [
+        {
+            "action": "accept",
+            "src":    ["autogroup:member"],
+            "dst":    ["autogroup:self"],
+            "users":  ["autogroup:nonroot", "root"],
+        },
+    ],
+}
