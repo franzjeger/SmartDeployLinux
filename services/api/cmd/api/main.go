@@ -19,6 +19,7 @@ import (
 
 	"github.com/your-org/deployserver/api/internal/auditlog"
 	"github.com/your-org/deployserver/api/internal/auth"
+	"github.com/your-org/deployserver/api/internal/eventbus"
 	"github.com/your-org/deployserver/api/internal/mtls"
 	"github.com/your-org/deployserver/api/internal/store"
 	"github.com/your-org/deployserver/api/internal/ui"
@@ -151,6 +152,7 @@ func serve() {
 		publicURL:  publicURL,
 		deployFQDN: deployFQDN,
 		verifier:   verifier,
+		bus:        eventbus.New(),
 	}
 
 	// --- public router: phone-home + operator API + healthz -----------
@@ -159,7 +161,10 @@ func serve() {
 	pub.Use(middleware.RealIP)
 	pub.Use(slogMiddleware)
 	pub.Use(middleware.Recoverer)
-	pub.Use(middleware.Timeout(30 * time.Second))
+	// NOTE: middleware.Timeout removed at the router level because it
+	// is incompatible with SSE long-lived connections. Each non-SSE
+	// route group below applies its own request timeout. See the
+	// withTimeout helper.
 
 	pub.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -173,11 +178,23 @@ func serve() {
 
 	// Phone-home from in-OS installers (cross-WAN; bearer-token auth).
 	pub.Route("/v1/jobs/{id}/events", func(r chi.Router) {
+		r.Use(middleware.Timeout(30 * time.Second))
 		r.Post("/", h.appendDeploymentEvent)
+	})
+
+	// SSE stream of events for a job. NO request timeout — the connection
+	// stays open as long as the client is reading. The handler manages
+	// idle disconnects and ping keepalives internally.
+	pub.Route("/api/v1/jobs/{id}/events/stream", func(r chi.Router) {
+		if h.verifier != nil {
+			r.Use(auth.Middleware(h.verifier))
+		}
+		r.Get("/", h.streamJobEvents)
 	})
 
 	// WinPE per-job endpoints. Bearer-token + state-gated.
 	pub.Route("/v1/jobs/{id}", func(r chi.Router) {
+		r.Use(middleware.Timeout(30 * time.Second))
 		r.Get("/deploy.cmd", h.winpeDeployCmd)
 		r.Post("/plan", h.winpePlan)
 		r.Get("/image.wim", h.winpeImage)
@@ -187,6 +204,7 @@ func serve() {
 
 	// Operator API (OIDC-authenticated).
 	pub.Route("/api/v1", func(r chi.Router) {
+		r.Use(middleware.Timeout(30 * time.Second))
 		if h.verifier != nil {
 			r.Use(auth.Middleware(h.verifier))
 		}
@@ -351,4 +369,14 @@ type statusRecorder struct {
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// Flush forwards to the wrapped writer if it implements http.Flusher.
+// Without this, embedding http.ResponseWriter here hides the Flusher
+// interface from `w.(http.Flusher)` assertions in downstream handlers
+// (notably the SSE stream handler).
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }

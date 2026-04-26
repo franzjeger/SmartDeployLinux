@@ -8,12 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/your-org/deployserver/api/internal/auth"
+	"github.com/your-org/deployserver/api/internal/eventbus"
 	"github.com/your-org/deployserver/api/internal/store"
 	"github.com/your-org/deployserver/api/internal/tokens"
 )
@@ -23,6 +26,7 @@ type handlers struct {
 	publicURL  string
 	deployFQDN string
 	verifier   *auth.Verifier
+	bus        *eventbus.Bus
 }
 
 type renderResp struct {
@@ -405,12 +409,115 @@ func (h *handlers) appendDeploymentEvent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Map phase to deployment_jobs state if it's a state transition.
 	target := mapPhaseToState(req.Phase)
 	if target != "" {
 		_ = h.store.TransitionJob(r.Context(), jobID, target)
 	}
+
+	// Push to SSE subscribers so the UI doesn't have to wait for poll.
+	if h.bus != nil {
+		h.bus.Publish(eventbus.Event{
+			JobID: jobID, Phase: req.Phase, Message: req.Message,
+			State: target, At: time.Now().UTC(),
+		})
+	}
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// streamJobEvents serves /api/v1/jobs/{id}/events/stream as Server-Sent
+// Events. The client first gets a backfill of all existing events,
+// then a continuous stream of new events until disconnect or 5 min idle.
+//
+// Headers honor X-Accel-Buffering: no so nginx doesn't buffer the
+// stream; tailscale serve passes through correctly.
+func (h *handlers) streamJobEvents(w http.ResponseWriter, r *http.Request) {
+	jobID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	// Existence check (also acts as a permission gate).
+	if _, err := h.store.GetJob(r.Context(), jobID); err != nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	send := func(evType string, payload any) bool {
+		buf, _ := json.Marshal(payload)
+		var line string
+		if evType != "" {
+			line = "event: " + evType + "\n"
+		}
+		line += "data: " + string(buf) + "\n\n"
+		if _, err := io.WriteString(w, line); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	// Backfill.
+	existing, _ := h.store.GetJobEvents(r.Context(), jobID)
+	for _, e := range existing {
+		if !send("event", map[string]any{
+			"id": e.ID, "phase": e.Phase, "message": e.Message, "at": e.At,
+		}) {
+			return
+		}
+	}
+	send("synced", map[string]any{"backfill_count": len(existing)})
+
+	// Subscribe + relay.
+	sub, cancel := h.bus.Subscribe(jobID)
+	defer cancel()
+
+	keepalive := time.NewTicker(20 * time.Second)
+	defer keepalive.Stop()
+	idleAfter := time.NewTimer(5 * time.Minute)
+	defer idleAfter.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-idleAfter.C:
+			send("timeout", map[string]any{"reason": "idle"})
+			return
+		case ev, ok := <-sub:
+			if !ok {
+				return
+			}
+			if !send("event", map[string]any{
+				"phase": ev.Phase, "message": ev.Message,
+				"state": ev.State, "at": ev.At,
+			}) {
+				return
+			}
+			if !idleAfter.Stop() {
+				select {
+				case <-idleAfter.C:
+				default:
+				}
+			}
+			idleAfter.Reset(5 * time.Minute)
+		case <-keepalive.C:
+			if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 func mapPhaseToState(phase string) string {

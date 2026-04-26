@@ -639,7 +639,7 @@ route("/jobs/:id", async ({ id }) => {
     <div class="page">
       <div class="page-title">
         <div>
-          <h1>Deployment ${stateBadge(j.state)}</h1>
+          <h1>Deployment <span id="job-state-badge">${stateBadge(j.state)}</span></h1>
           <p class="subtitle mono small">${escapeHTML(j.id)}</p>
         </div>
         <div class="page-actions">
@@ -651,31 +651,83 @@ route("/jobs/:id", async ({ id }) => {
         <dl class="detail-grid">
           <dt>Machine</dt>    <dd><a href="#/machines/${j.machine_id}">${escapeHTML(j.machine_asset_tag || trunc(j.machine_id))}</a></dd>
           <dt>Profile</dt>    <dd>${escapeHTML(j.profile_name)}</dd>
-          <dt>State</dt>      <dd>${stateBadge(j.state)}</dd>
+          <dt>State</dt>      <dd id="job-state-cell">${stateBadge(j.state)}</dd>
           <dt>Created</dt>    <dd class="mono">${fmtAbsolute(j.created_at)}</dd>
           <dt>Started</dt>    <dd class="mono">${fmtAbsolute(j.started_at)}</dd>
-          <dt>Finished</dt>   <dd class="mono">${fmtAbsolute(j.finished_at)}</dd>
+          <dt>Finished</dt>   <dd id="job-finished-cell" class="mono">${fmtAbsolute(j.finished_at)}</dd>
         </dl>
       </div>
 
-      <div class="section-title">Event timeline</div>
+      <div class="section-title">Event timeline <span id="stream-status" class="muted small" style="font-weight:normal;text-transform:none;letter-spacing:0;"></span></div>
       <div class="card">
-        ${events.length ? `
-          <div class="timeline">
-            ${events.map(e => `
-              <div class="timeline-item ${e.phase === "completed" ? "ok" : (e.phase === "failed" ? "err" : "")}">
-                <div class="when">${fmtAbsolute(e.at)} · <span class="muted">${escapeHTML(e.phase)}</span></div>
-                <div class="what">${escapeHTML(e.message)}</div>
-              </div>`).join("")}
-          </div>` : `<div class="empty muted">No events yet — installer hasn't phoned home.</div>`}
+        <div class="timeline" id="event-timeline">
+          ${events.map(e => timelineItem(e)).join("") || `<div class="empty muted">Waiting for first event…</div>`}
+        </div>
       </div>
     </div>`;
 
-  if (["pending","bootstrapped","imaging","post_install"].includes(j.state)) {
-    const t = setTimeout(navigate, 4000);
-    return () => clearTimeout(t);
+  // Subscribe to live event stream. SSE pushes new events instantly so
+  // we don't have to poll. If SSE isn't supported (or fails), we
+  // gracefully degrade to a 4s polling fallback.
+  let currentState = j.state;
+  const isLive = s => ["pending","bootstrapped","imaging","post_install"].includes(s);
+
+  const tlEl = $("#event-timeline");
+  const statusEl = $("#stream-status");
+  const stateBadgeEl = $("#job-state-badge");
+  const stateCellEl = $("#job-state-cell");
+  const finishedCellEl = $("#job-finished-cell");
+
+  // Clean DOM if there were no events (we showed an "empty" message).
+  if (events.length === 0) tlEl.innerHTML = "";
+
+  let es;
+  if (typeof EventSource === "function") {
+    es = new EventSource(`/api/v1/jobs/${id}/events/stream`);
+    es.addEventListener("synced", () => {
+      statusEl.innerHTML = `<span class="badge ok pulsing"><span class="dot"></span>live</span>`;
+    });
+    es.addEventListener("event", e => {
+      const ev = JSON.parse(e.data);
+      // Don't double-add events that came via the initial REST fetch.
+      if (ev.id && tlEl.querySelector(`[data-evid="${ev.id}"]`)) return;
+      if (tlEl.querySelector(".empty")) tlEl.innerHTML = "";
+      tlEl.insertAdjacentHTML("beforeend", timelineItem(ev));
+      // Update state badges if a state transition rode along.
+      if (ev.state && ev.state !== currentState) {
+        currentState = ev.state;
+        stateBadgeEl.innerHTML = stateBadge(currentState);
+        stateCellEl.innerHTML = stateBadge(currentState);
+        if (!isLive(currentState)) {
+          finishedCellEl.textContent = fmtAbsolute(new Date().toISOString());
+        }
+      }
+    });
+    es.addEventListener("timeout", () => {
+      statusEl.innerHTML = `<span class="muted small">stream idle, reconnecting…</span>`;
+    });
+    es.addEventListener("error", () => {
+      statusEl.innerHTML = `<span class="muted small">disconnected (auto-reconnects)</span>`;
+    });
+  } else {
+    // Polling fallback for browsers without EventSource.
+    statusEl.innerHTML = `<span class="muted small">polling (no SSE)</span>`;
+    if (isLive(j.state)) {
+      const t = setTimeout(navigate, 4000);
+      return () => clearTimeout(t);
+    }
   }
+
+  return () => { if (es) es.close(); };
 });
+
+function timelineItem(e) {
+  const cls = e.phase === "completed" ? "ok" : (e.phase === "failed" ? "err" : "");
+  return `<div class="timeline-item ${cls}" data-evid="${e.id || ''}">
+    <div class="when">${fmtAbsolute(e.at)} · <span class="muted">${escapeHTML(e.phase)}</span></div>
+    <div class="what">${escapeHTML(e.message)}</div>
+  </div>`;
+}
 
 // ---------- views: Profiles ----------
 
