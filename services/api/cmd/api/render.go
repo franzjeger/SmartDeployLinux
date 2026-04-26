@@ -68,20 +68,41 @@ func (h *handlers) bundleToResp(b *store.RenderBundle) renderResp {
 	r.Image.OSVersion = b.ImageOSVersion
 	r.Image.Arch = b.ImageArch
 
+	// Pull URLs from images.media — operator-controlled per-image
+	// metadata. If the operator hasn't set them, fall back to the
+	// /static convention so the http-boot service can serve from a
+	// local mirror if configured.
+	var media struct {
+		KernelURL   string `json:"kernel_url"`
+		InitrdURL   string `json:"initrd_url"`
+		WimbootURL  string `json:"wimboot_url"`
+		BootWimURL  string `json:"bootwim_url"`
+		WimURL      string `json:"wim_url"`
+		KernelArgs  string `json:"kernel_args"`
+	}
+	if len(b.ImageMedia) > 0 {
+		_ = json.Unmarshal(b.ImageMedia, &media)
+	}
+
 	staticBase := fmt.Sprintf("https://%s/static", h.deployFQDN)
 	switch b.ImageOSFamily {
 	case "linux":
-		r.Image.KernelURL = fmt.Sprintf("%s/%s-%s/vmlinuz", staticBase, b.ImageOSFamily, b.ImageOSVersion)
-		r.Image.InitrdURL = fmt.Sprintf("%s/%s-%s/initrd", staticBase, b.ImageOSFamily, b.ImageOSVersion)
+		r.Image.KernelURL = nonEmpty(media.KernelURL,
+			fmt.Sprintf("%s/%s-%s/vmlinuz", staticBase, b.ImageOSFamily, b.ImageOSVersion))
+		r.Image.InitrdURL = nonEmpty(media.InitrdURL,
+			fmt.Sprintf("%s/%s-%s/initrd", staticBase, b.ImageOSFamily, b.ImageOSVersion))
 	case "windows":
-		r.Image.WimbootURL = fmt.Sprintf("%s/wimboot/wimboot", staticBase)
-		r.Image.BootWimURL = fmt.Sprintf("%s/winpe/boot.wim", staticBase)
+		r.Image.WimbootURL = nonEmpty(media.WimbootURL, fmt.Sprintf("%s/wimboot/wimboot", staticBase))
+		r.Image.BootWimURL = nonEmpty(media.BootWimURL, fmt.Sprintf("%s/winpe/boot.wim", staticBase))
+		r.Image.WimURL     = nonEmpty(media.WimURL, fmt.Sprintf("%s/win/install.wim", staticBase))
 	}
 	if b.JobID != nil {
 		r.JobID = b.JobID.String()
 	}
 	return r
 }
+
+func nonEmpty(a, b string) string { if a != "" { return a }; return b }
 
 func (h *handlers) renderMachineByID(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")

@@ -452,7 +452,7 @@ func (h *handlers) deleteProfileTemplate(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- GET /api/v1/images ----------------------------------------------
+// --- images CRUD -----------------------------------------------------
 
 func (h *handlers) listImages(w http.ResponseWriter, r *http.Request) {
 	imgs, err := h.store.ListImages(r.Context())
@@ -464,6 +464,133 @@ func (h *handlers) listImages(w http.ResponseWriter, r *http.Request) {
 		imgs = []store.Image{}
 	}
 	writeJSON(w, http.StatusOK, imgs)
+}
+
+func (h *handlers) getImage(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	img, err := h.store.GetImage(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, img)
+}
+
+type createImageReq struct {
+	Name        string                 `json:"name"`
+	OSFamily    string                 `json:"os_family"`
+	OSVersion   string                 `json:"os_version"`
+	Arch        string                 `json:"arch"`
+	Description *string                `json:"description"`
+	Media       map[string]interface{} `json:"media"`
+}
+
+func (h *handlers) createImage(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "*") && !auth.HasPerm(r.Context(), "image.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var req createImageReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	in := store.CreateImageInput{
+		Name: req.Name, OSFamily: req.OSFamily, OSVersion: req.OSVersion,
+		Arch: req.Arch, Description: req.Description,
+	}
+	if req.Media != nil {
+		in.Media, _ = json.Marshal(req.Media)
+	}
+	id, err := h.store.CreateImage(r.Context(), in)
+	if err != nil {
+		http.Error(w, "create: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	uid := auth.UserID(r.Context())
+	_ = h.store.Audit(r.Context(), store.AuditEvent{
+		ActorID: &uid, ActorKind: "user", Action: "image.created",
+		SubjectID: &id, SubjectKind: "image",
+	})
+	img, _ := h.store.GetImage(r.Context(), id)
+	writeJSON(w, http.StatusCreated, img)
+}
+
+type updateImageReq struct {
+	Name        *string                 `json:"name"`
+	Description *string                 `json:"description"`
+	Media       *map[string]interface{} `json:"media"`
+}
+
+func (h *handlers) updateImage(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "*") && !auth.HasPerm(r.Context(), "image.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	var req updateImageReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	in := store.UpdateImageInput{Name: req.Name, Description: req.Description}
+	if req.Media != nil {
+		b, _ := json.Marshal(*req.Media)
+		in.Media = b
+	}
+	if err := h.store.UpdateImage(r.Context(), id, in); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "update: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	uid := auth.UserID(r.Context())
+	_ = h.store.Audit(r.Context(), store.AuditEvent{
+		ActorID: &uid, ActorKind: "user", Action: "image.updated",
+		SubjectID: &id, SubjectKind: "image",
+	})
+	img, _ := h.store.GetImage(r.Context(), id)
+	writeJSON(w, http.StatusOK, img)
+}
+
+func (h *handlers) deleteImage(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "*") && !auth.HasPerm(r.Context(), "image.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.DeleteImage(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	uid := auth.UserID(r.Context())
+	_ = h.store.Audit(r.Context(), store.AuditEvent{
+		ActorID: &uid, ActorKind: "user", Action: "image.deleted",
+		SubjectID: &id, SubjectKind: "image",
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- GET /api/v1/jobs ------------------------------------------------

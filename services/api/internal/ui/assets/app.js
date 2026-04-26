@@ -1031,26 +1031,206 @@ route("/images", async () => {
   const imgs = await api("GET", "/api/v1/images");
   $("#content").innerHTML = `
     <div class="page">
-      <div class="page-title"><h1>Images</h1>
-        <p class="subtitle">Hardware-independent install media. Replace placeholders with real ingested images via <code>deployctl images upload</code>.</p></div>
+      <div class="page-title">
+        <div><h1>Images</h1>
+          <p class="subtitle">Install media — kernel/initrd URLs (Linux) or wimboot/boot.wim/install.wim URLs (Windows). Point at upstream mirrors or your own HTTP storage; the iPXE chain at deploy time fetches directly from these URLs.</p></div>
+        <div class="page-actions"><button class="btn" id="register-image-btn">+ Register image</button></div>
+      </div>
       ${imgs.length ? `
         <div class="table-wrap"><table>
           <thead><tr>
-            <th>Name</th><th>OS</th><th>Arch</th><th>Versions</th><th>Description</th><th>Created</th>
+            <th>Name</th><th>OS</th><th>Arch</th><th>Media URLs</th><th>Description</th>
           </tr></thead>
           <tbody>
-          ${imgs.map(i => `
-            <tr class="no-hover">
+          ${imgs.map(i => {
+            const m = i.media || {};
+            const urls = i.os_family === "linux"
+              ? [["kernel", m.kernel_url], ["initrd", m.initrd_url]]
+              : [["wimboot", m.wimboot_url], ["boot.wim", m.bootwim_url], ["install.wim", m.wim_url]];
+            const populated = urls.filter(([_, u]) => u).length;
+            return `
+            <tr onclick="location.hash='#/images/${i.id}'">
               <td><strong>${escapeHTML(i.name)}</strong></td>
               <td>${escapeHTML(i.os_family)} ${escapeHTML(i.os_version)}</td>
               <td><span class="badge">${escapeHTML(i.arch)}</span></td>
-              <td>${i.versions_count}</td>
+              <td>${populated > 0
+                ? `<span class="badge ok"><span class="dot"></span>${populated}/${urls.length} set</span>`
+                : `<span class="badge warn"><span class="dot"></span>not configured</span>`}</td>
               <td class="muted small">${escapeHTML(i.description || "—")}</td>
-              <td class="mono small muted">${fmtAbsolute(i.created_at)}</td>
-            </tr>`).join("")}
+            </tr>`;
+          }).join("")}
           </tbody>
-        </table></div>` : `<div class="card"><div class="empty muted">No images.</div></div>`}
+        </table></div>` : `<div class="card"><div class="empty muted">No images. Click "+ Register image" to add one.</div></div>`}
     </div>`;
+
+  $("#register-image-btn").addEventListener("click", () => openImageRegisterModal());
+});
+
+function openImageRegisterModal() {
+  openModal({
+    title: "Register image",
+    body: `
+      <form id="image-form">
+        <div class="row">
+          <label>Name * <input name="name" required placeholder="ubuntu-2404-engineering"></label>
+          <label>OS family
+            <select name="os_family">
+              <option value="linux" selected>linux</option>
+              <option value="windows">windows</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label>OS version * <input name="os_version" required placeholder="24.04"></label>
+          <label>Arch
+            <select name="arch">
+              <option value="amd64" selected>amd64</option>
+              <option value="arm64">arm64</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label class="full">Description <input name="description" placeholder="Ubuntu 24.04 LTS netboot from upstream mirror"></label>
+        </div>
+        <p class="hint small muted" style="margin-top: 4px;">Media URLs (kernel, initrd, etc.) are configured on the image's detail page after creation.</p>
+      </form>`,
+    primary: { label: "Create" },
+    secondary: "Cancel",
+    onPrimary: async modal => {
+      const fd = new FormData($("#image-form", modal));
+      const body = {
+        name: fd.get("name"),
+        os_family: fd.get("os_family"),
+        os_version: fd.get("os_version"),
+        arch: fd.get("arch"),
+      };
+      const desc = fd.get("description");
+      if (desc) body.description = desc;
+      const created = await api("POST", "/api/v1/images", body);
+      toast(`Created image ${created.name}`, "ok");
+      location.hash = "#/images/" + created.id;
+    },
+  });
+}
+
+// ---------- views: Image detail ----------
+
+route("/images/:id", async ({ id }) => {
+  setBreadcrumb([{label:"Images", href:"#/images"}, {label: id.slice(0,8)+"…"}]);
+  const img = await api("GET", `/api/v1/images/${id}`);
+  const m = img.media || {};
+  const isLinux = img.os_family === "linux";
+
+  const fields = isLinux
+    ? [
+        { key: "kernel_url",  label: "Kernel URL",  hint: "iPXE 'kernel' line. e.g. https://releases.ubuntu.com/24.04/.../linux" },
+        { key: "initrd_url",  label: "Initrd URL",  hint: "iPXE 'initrd' line. e.g. .../initrd" },
+        { key: "kernel_args", label: "Kernel args (optional)", hint: "Appended to cmdline. e.g. 'autoinstall ds=nocloud-net'" },
+      ]
+    : [
+        { key: "wimboot_url", label: "wimboot URL",        hint: "Pinned iPXE wimboot binary." },
+        { key: "bootwim_url", label: "WinPE boot.wim URL", hint: "Customized WinPE that fetches install.wim and runs deploy.cmd." },
+        { key: "wim_url",     label: "Install WIM URL",    hint: "The hardware-independent Windows image." },
+      ];
+
+  $("#content").innerHTML = `
+    <div class="page">
+      <div class="page-title">
+        <div>
+          <h1>${escapeHTML(img.name)}</h1>
+          <p class="subtitle">${escapeHTML(img.os_family)} ${escapeHTML(img.os_version)} · ${escapeHTML(img.arch)} · ${img.versions_count} version(s)</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn secondary" id="edit-meta">Edit metadata</button>
+          <button class="btn danger" id="delete-image">Delete</button>
+        </div>
+      </div>
+
+      ${img.description ? `<div class="banner info" style="margin-top:16px;">${escapeHTML(img.description)}</div>` : ""}
+
+      <div class="section-title">Media URLs</div>
+      <div class="card">
+        <p class="hint muted small">These URLs are baked into the iPXE chain script at deploy time. Tailnet-internal URLs work; pointing at the public internet is also fine because the bootstrap stick is already on the tailnet by design.</p>
+        <form id="media-form">
+          ${fields.map(f => `
+            <div class="row">
+              <label class="full">
+                ${escapeHTML(f.label)}
+                <input name="${f.key}" value="${escapeHTML(m[f.key] || "")}" placeholder="${escapeHTML(f.hint)}" autocomplete="off">
+              </label>
+            </div>
+          `).join("")}
+          <div class="btn-row" style="margin-top: 8px;">
+            <button class="btn small" type="submit">Save URLs</button>
+            <span id="media-status" class="muted small"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="section-title">Used by profiles</div>
+      <div id="profiles-using" class="card"><div class="muted small">Loading…</div></div>
+    </div>`;
+
+  const profiles = await api("GET", "/api/v1/profiles").catch(() => []);
+  const using = profiles.filter(p => p.image_id === id);
+  $("#profiles-using").innerHTML = using.length ? `
+    <table><tbody>
+      ${using.map(p => `
+        <tr onclick="location.hash='#/profiles/${p.id}'">
+          <td><strong>${escapeHTML(p.name)}</strong></td>
+          <td class="muted small">created ${fmtTime(p.created_at)}</td>
+        </tr>`).join("")}
+    </tbody></table>` : `<div class="muted small">No profiles use this image yet.</div>`;
+
+  $("#media-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const media = {};
+    for (const [k, v] of fd) if (v) media[k] = v;
+    const status = $("#media-status");
+    status.textContent = "Saving…";
+    try {
+      await api("PATCH", `/api/v1/images/${id}`, { media });
+      status.textContent = "Saved";
+      toast("Media URLs saved", "ok");
+    } catch (err) { status.textContent = "Error: " + err.message; toast(err.message, "err"); }
+  });
+
+  $("#edit-meta").addEventListener("click", () => {
+    openModal({
+      title: "Edit image metadata",
+      body: `
+        <form id="meta-form">
+          <div class="row"><label class="full">Name <input name="name" value="${escapeHTML(img.name)}" required></label></div>
+          <div class="row"><label class="full">Description <input name="description" value="${escapeHTML(img.description||"")}"></label></div>
+        </form>`,
+      primary: { label: "Save" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const fd = new FormData($("#meta-form", modal));
+        await api("PATCH", `/api/v1/images/${id}`, {
+          name: fd.get("name"),
+          description: fd.get("description") || "",
+        });
+        toast("Image updated", "ok");
+        navigate();
+      },
+    });
+  });
+
+  $("#delete-image").addEventListener("click", async () => {
+    const ok = await confirmModal({
+      title: "Delete image",
+      message: `Delete image "${img.name}"? This is permanent.`,
+      danger: true, primaryLabel: "Delete",
+    });
+    if (!ok) return;
+    try {
+      await api("DELETE", `/api/v1/images/${id}`);
+      toast("Image deleted", "ok");
+      location.hash = "#/images";
+    } catch (e) { toast(e.message, "err"); }
+  });
 });
 
 // ---------- views: Sticks ----------

@@ -10,6 +10,7 @@ package store
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -222,10 +223,12 @@ type RenderBundle struct {
 	ProfileID      uuid.UUID
 	ProfileName    string
 	ProfileVars    []byte // raw jsonb
+	ImageID        uuid.UUID
 	ImageOSFamily  string
 	ImageOSVersion string
 	ImageArch      string
 	ImageBlobKey   string // s3 key for the kernel/wim
+	ImageMedia     []byte // raw jsonb of images.media
 	JobID          *uuid.UUID
 	OneShotToken   string // empty unless caller created one
 }
@@ -274,12 +277,13 @@ func (s *Store) LookupRenderBundle(ctx context.Context, machineID uuid.UUID) (*R
 
 	row = s.pool.QueryRow(ctx, `
 		SELECT p.name, p.answer_file_vars,
-		       i.os_family, i.os_version, i.arch
+		       i.id, i.os_family, i.os_version, i.arch, i.media
 		FROM deployment_profiles p
 		JOIN images i ON i.id = p.image_id
 		WHERE p.id = $1`, profileID)
 	if err := row.Scan(&bundle.ProfileName, &bundle.ProfileVars,
-		&bundle.ImageOSFamily, &bundle.ImageOSVersion, &bundle.ImageArch); err != nil {
+		&bundle.ImageID, &bundle.ImageOSFamily, &bundle.ImageOSVersion, &bundle.ImageArch,
+		&bundle.ImageMedia); err != nil {
 		return nil, err
 	}
 
@@ -613,20 +617,21 @@ func (s *Store) GetJobEvents(ctx context.Context, jobID uuid.UUID) ([]JobEvent, 
 // --- images ----------------------------------------------------------
 
 type Image struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	OSFamily    string    `json:"os_family"`
-	OSVersion   string    `json:"os_version"`
-	Arch        string    `json:"arch"`
-	Description *string   `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	VersionsCount int     `json:"versions_count"`
+	ID            uuid.UUID       `json:"id"`
+	Name          string          `json:"name"`
+	OSFamily      string          `json:"os_family"`
+	OSVersion     string          `json:"os_version"`
+	Arch          string          `json:"arch"`
+	Description   *string         `json:"description"`
+	CreatedAt     time.Time       `json:"created_at"`
+	VersionsCount int             `json:"versions_count"`
+	Media         json.RawMessage `json:"media"`
 }
 
 func (s *Store) ListImages(ctx context.Context) ([]Image, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT i.id, i.name, i.os_family, i.os_version, i.arch, i.description,
-		       i.created_at,
+		       i.created_at, i.media,
 		       (SELECT count(*) FROM image_versions iv WHERE iv.image_id = i.id)
 		FROM images i ORDER BY i.os_family, i.name`)
 	if err != nil {
@@ -636,13 +641,124 @@ func (s *Store) ListImages(ctx context.Context) ([]Image, error) {
 	var out []Image
 	for rows.Next() {
 		var i Image
+		var media []byte
 		if err := rows.Scan(&i.ID, &i.Name, &i.OSFamily, &i.OSVersion,
-			&i.Arch, &i.Description, &i.CreatedAt, &i.VersionsCount); err != nil {
+			&i.Arch, &i.Description, &i.CreatedAt, &media, &i.VersionsCount); err != nil {
 			return nil, err
+		}
+		if len(media) > 0 {
+			i.Media = json.RawMessage(media)
+		} else {
+			i.Media = json.RawMessage(`{}`)
 		}
 		out = append(out, i)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) GetImage(ctx context.Context, id uuid.UUID) (*Image, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT i.id, i.name, i.os_family, i.os_version, i.arch, i.description,
+		       i.created_at, i.media,
+		       (SELECT count(*) FROM image_versions iv WHERE iv.image_id = i.id)
+		FROM images i WHERE i.id = $1`, id)
+	var i Image
+	var media []byte
+	if err := row.Scan(&i.ID, &i.Name, &i.OSFamily, &i.OSVersion,
+		&i.Arch, &i.Description, &i.CreatedAt, &media, &i.VersionsCount); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if len(media) > 0 {
+		i.Media = json.RawMessage(media)
+	} else {
+		i.Media = json.RawMessage(`{}`)
+	}
+	return &i, nil
+}
+
+type CreateImageInput struct {
+	Name        string
+	OSFamily    string
+	OSVersion   string
+	Arch        string
+	Description *string
+	Media       []byte // JSONB; pass nil for `{}`
+}
+
+func (s *Store) CreateImage(ctx context.Context, in CreateImageInput) (uuid.UUID, error) {
+	if in.Name == "" || in.OSFamily == "" || in.OSVersion == "" || in.Arch == "" {
+		return uuid.Nil, errors.New("name, os_family, os_version, arch all required")
+	}
+	if len(in.Media) == 0 {
+		in.Media = []byte(`{}`)
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO images (name, os_family, os_version, arch, description, media)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+		RETURNING id`,
+		in.Name, in.OSFamily, in.OSVersion, in.Arch, in.Description, in.Media).Scan(&id)
+	return id, err
+}
+
+type UpdateImageInput struct {
+	Name        *string
+	Description *string
+	Media       []byte // pass nil to leave; pass `{}` to clear
+}
+
+func (s *Store) UpdateImage(ctx context.Context, id uuid.UUID, in UpdateImageInput) error {
+	sets := []string{}
+	args := []any{id}
+	if in.Name != nil {
+		sets = append(sets, fmt.Sprintf("name = $%d", len(args)+1))
+		args = append(args, *in.Name)
+	}
+	if in.Description != nil {
+		sets = append(sets, fmt.Sprintf("description = $%d", len(args)+1))
+		args = append(args, *in.Description)
+	}
+	if in.Media != nil {
+		sets = append(sets, fmt.Sprintf("media = $%d::jsonb", len(args)+1))
+		args = append(args, in.Media)
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	tag, err := s.pool.Exec(ctx,
+		"UPDATE images SET "+strings.Join(sets, ", ")+" WHERE id = $1", args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteImage(ctx context.Context, id uuid.UUID) error {
+	// Refuse if any deployment_profile references this image.
+	var refs int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM deployment_profiles WHERE image_id = $1`, id).Scan(&refs); err != nil {
+		return err
+	}
+	if refs > 0 {
+		return fmt.Errorf("image is used by %d profile(s); reassign them first", refs)
+	}
+	// Delete image_versions cascade is set up via FK; blobs are
+	// content-addressed and may be shared, so we don't delete them here.
+	tag, err := s.pool.Exec(ctx, `DELETE FROM images WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // --- machine delete --------------------------------------------------
