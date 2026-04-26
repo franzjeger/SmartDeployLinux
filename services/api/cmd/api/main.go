@@ -176,6 +176,12 @@ func serve() {
 	pub.Handle("/", uiHandler)
 	pub.Handle("/assets/*", uiHandler)
 
+	// Direct iPXE menu for the catalog — no auth, no DB lookup, just a
+	// generated iPXE script listing every catalog entry. Anyone with
+	// network access to the api can `chain` to this URL and get a
+	// netboot.xyz-style picker.
+	pub.Get("/catalog/menu.ipxe", h.catalogMenuIPXE)
+
 	// Phone-home from in-OS installers (cross-WAN; bearer-token auth).
 	pub.Route("/v1/jobs/{id}/events", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))

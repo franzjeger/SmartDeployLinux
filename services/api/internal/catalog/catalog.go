@@ -20,6 +20,18 @@ type Catalog struct {
 	Version    string     `json:"version"`
 	Doc        string     `json:"doc"`
 	Categories []Category `json:"categories"`
+	Fallback   *Fallback  `json:"fallback,omitempty"`
+}
+
+// Fallback is the upstream menu we delegate to for distros we don't
+// curate ourselves (typically netboot.xyz). When the iPXE menu is
+// rendered, the operator gets a "Browse netboot.xyz menu" entry that
+// chains directly to this URL, giving instant access to anything not
+// in our local catalog.
+type Fallback struct {
+	Label       string `json:"label"`
+	ChainURL    string `json:"chain_url"`
+	Description string `json:"description"`
 }
 
 type Category struct {
