@@ -30,6 +30,11 @@ services:
 
   dnsmasq:
     profiles: ["lan-pxe"]      # already disabled by default
+    environment:
+      LISTEN_INTERFACE: eth0
+      SUBNET: 192.168.200.0
+      TFTP_SERVER_IP: 192.168.200.23
+      DEPLOY_FQDN: docker.tailb0b06a.ts.net
 
   api:
     ports:

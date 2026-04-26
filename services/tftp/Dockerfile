@@ -8,9 +8,12 @@
 
 FROM alpine:3.20
 
-RUN apk add --no-cache dnsmasq=2.90-r3 \
-    && addgroup -S dnsmasq \
-    && adduser -S -G dnsmasq dnsmasq
+# Don't pin dnsmasq's apk version — Alpine rotates patch versions out of
+# the live repos and a pinned build randomly fails to build months later.
+# We rely on Alpine's own stability in the 3.x branch.
+# The dnsmasq Alpine package already creates the dnsmasq user/group at
+# install time; don't duplicate that.
+RUN apk add --no-cache dnsmasq
 
 COPY dnsmasq.conf /etc/dnsmasq.conf
 COPY entrypoint.sh /usr/local/bin/entrypoint
