@@ -1,0 +1,278 @@
+{
+  "version": "2026.04.26",
+  "doc": "Curated upstream-mirror catalog inspired by netboot.xyz. Each entry maps directly to an `images` row + `images.media` JSONB. URLs point at vendor-controlled netboot mirrors so the iPXE chainload works without a local mirror. Update this file when distros release or move their netboot images; bump `version` whenever you do.",
+  "categories": [
+    {
+      "id": "ubuntu",
+      "name": "Ubuntu",
+      "entries": [
+        {
+          "id": "ubuntu-2404-server",
+          "name": "Ubuntu 24.04 LTS Server (Noble)",
+          "os_family": "linux",
+          "os_version": "24.04",
+          "arch": "amd64",
+          "description": "Ubuntu 24.04 LTS server, official netboot kernel + initrd from archive.ubuntu.com.",
+          "media": {
+            "kernel_url": "https://archive.ubuntu.com/ubuntu/dists/noble/main/installer-amd64/current/images/netboot/ubuntu-installer/amd64/linux",
+            "initrd_url": "https://archive.ubuntu.com/ubuntu/dists/noble/main/installer-amd64/current/images/netboot/ubuntu-installer/amd64/initrd.gz",
+            "kernel_args": "auto=true priority=critical interface=auto"
+          }
+        },
+        {
+          "id": "ubuntu-2204-server",
+          "name": "Ubuntu 22.04 LTS Server (Jammy)",
+          "os_family": "linux",
+          "os_version": "22.04",
+          "arch": "amd64",
+          "description": "Ubuntu 22.04 LTS server netboot.",
+          "media": {
+            "kernel_url": "https://archive.ubuntu.com/ubuntu/dists/jammy/main/installer-amd64/current/legacy-images/netboot/ubuntu-installer/amd64/linux",
+            "initrd_url": "https://archive.ubuntu.com/ubuntu/dists/jammy/main/installer-amd64/current/legacy-images/netboot/ubuntu-installer/amd64/initrd.gz",
+            "kernel_args": "auto=true priority=critical interface=auto"
+          }
+        },
+        {
+          "id": "ubuntu-2004-server",
+          "name": "Ubuntu 20.04 LTS Server (Focal)",
+          "os_family": "linux",
+          "os_version": "20.04",
+          "arch": "amd64",
+          "description": "Ubuntu 20.04 LTS server netboot.",
+          "media": {
+            "kernel_url": "https://archive.ubuntu.com/ubuntu/dists/focal/main/installer-amd64/current/legacy-images/netboot/ubuntu-installer/amd64/linux",
+            "initrd_url": "https://archive.ubuntu.com/ubuntu/dists/focal/main/installer-amd64/current/legacy-images/netboot/ubuntu-installer/amd64/initrd.gz",
+            "kernel_args": "auto=true priority=critical interface=auto"
+          }
+        }
+      ]
+    },
+    {
+      "id": "debian",
+      "name": "Debian",
+      "entries": [
+        {
+          "id": "debian-12",
+          "name": "Debian 12 (Bookworm)",
+          "os_family": "linux",
+          "os_version": "12",
+          "arch": "amd64",
+          "description": "Debian 12 stable netboot from deb.debian.org.",
+          "media": {
+            "kernel_url": "https://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
+            "initrd_url": "https://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
+            "kernel_args": "auto=true priority=critical interface=auto"
+          }
+        },
+        {
+          "id": "debian-11",
+          "name": "Debian 11 (Bullseye)",
+          "os_family": "linux",
+          "os_version": "11",
+          "arch": "amd64",
+          "description": "Debian 11 oldstable netboot.",
+          "media": {
+            "kernel_url": "https://deb.debian.org/debian/dists/bullseye/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
+            "initrd_url": "https://deb.debian.org/debian/dists/bullseye/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
+            "kernel_args": "auto=true priority=critical interface=auto"
+          }
+        }
+      ]
+    },
+    {
+      "id": "rhel-family",
+      "name": "Rocky / Alma / Fedora (RHEL family)",
+      "entries": [
+        {
+          "id": "rocky-9",
+          "name": "Rocky Linux 9",
+          "os_family": "linux",
+          "os_version": "9",
+          "arch": "amd64",
+          "description": "Rocky 9 netboot via download.rockylinux.org. Uses Anaconda inst.repo.",
+          "media": {
+            "kernel_url": "https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.repo=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/"
+          }
+        },
+        {
+          "id": "rocky-8",
+          "name": "Rocky Linux 8",
+          "os_family": "linux",
+          "os_version": "8",
+          "arch": "amd64",
+          "description": "Rocky 8 netboot.",
+          "media": {
+            "kernel_url": "https://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "https://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=https://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/ inst.repo=https://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/"
+          }
+        },
+        {
+          "id": "alma-9",
+          "name": "AlmaLinux 9",
+          "os_family": "linux",
+          "os_version": "9",
+          "arch": "amd64",
+          "description": "AlmaLinux 9 netboot via repo.almalinux.org.",
+          "media": {
+            "kernel_url": "https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/"
+          }
+        },
+        {
+          "id": "alma-8",
+          "name": "AlmaLinux 8",
+          "os_family": "linux",
+          "os_version": "8",
+          "arch": "amd64",
+          "description": "AlmaLinux 8 netboot.",
+          "media": {
+            "kernel_url": "https://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "https://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=https://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/ inst.repo=https://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/"
+          }
+        },
+        {
+          "id": "fedora-41",
+          "name": "Fedora 41 Server",
+          "os_family": "linux",
+          "os_version": "41",
+          "arch": "amd64",
+          "description": "Fedora 41 Server netboot via download.fedoraproject.org.",
+          "media": {
+            "kernel_url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/41/Server/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/41/Server/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=https://dl.fedoraproject.org/pub/fedora/linux/releases/41/Server/x86_64/os/ inst.repo=https://dl.fedoraproject.org/pub/fedora/linux/releases/41/Server/x86_64/os/"
+          }
+        },
+        {
+          "id": "fedora-40",
+          "name": "Fedora 40 Server",
+          "os_family": "linux",
+          "os_version": "40",
+          "arch": "amd64",
+          "description": "Fedora 40 Server netboot.",
+          "media": {
+            "kernel_url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/40/Server/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/40/Server/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=https://dl.fedoraproject.org/pub/fedora/linux/releases/40/Server/x86_64/os/ inst.repo=https://dl.fedoraproject.org/pub/fedora/linux/releases/40/Server/x86_64/os/"
+          }
+        }
+      ]
+    },
+    {
+      "id": "suse",
+      "name": "openSUSE",
+      "entries": [
+        {
+          "id": "opensuse-tumbleweed",
+          "name": "openSUSE Tumbleweed",
+          "os_family": "linux",
+          "os_version": "tumbleweed",
+          "arch": "amd64",
+          "description": "openSUSE Tumbleweed rolling release netboot.",
+          "media": {
+            "kernel_url": "https://download.opensuse.org/tumbleweed/repo/oss/boot/x86_64/loader/linux",
+            "initrd_url": "https://download.opensuse.org/tumbleweed/repo/oss/boot/x86_64/loader/initrd",
+            "kernel_args": "install=https://download.opensuse.org/tumbleweed/repo/oss/"
+          }
+        },
+        {
+          "id": "opensuse-leap-15-6",
+          "name": "openSUSE Leap 15.6",
+          "os_family": "linux",
+          "os_version": "15.6",
+          "arch": "amd64",
+          "description": "openSUSE Leap 15.6 stable netboot.",
+          "media": {
+            "kernel_url": "https://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/linux",
+            "initrd_url": "https://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/initrd",
+            "kernel_args": "install=https://download.opensuse.org/distribution/leap/15.6/repo/oss/"
+          }
+        }
+      ]
+    },
+    {
+      "id": "arch-and-friends",
+      "name": "Arch & friends",
+      "entries": [
+        {
+          "id": "archlinux-latest",
+          "name": "Arch Linux (latest)",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
+          "description": "Arch Linux netboot via archlinux.org's official netboot service. The kernel + initrd auto-update with each release.",
+          "media": {
+            "kernel_url": "https://geo.mirror.pkgbuild.com/iso/latest/arch/boot/x86_64/vmlinuz-linux",
+            "initrd_url": "https://geo.mirror.pkgbuild.com/iso/latest/arch/boot/x86_64/initramfs-linux.img",
+            "kernel_args": "archisobasedir=arch archiso_http_srv=https://geo.mirror.pkgbuild.com/iso/latest/ ip=dhcp"
+          }
+        },
+        {
+          "id": "alpine-3-20",
+          "name": "Alpine Linux 3.20",
+          "os_family": "linux",
+          "os_version": "3.20",
+          "arch": "amd64",
+          "description": "Alpine 3.20 netboot — minimal Linux for containers + appliances.",
+          "media": {
+            "kernel_url": "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/netboot/vmlinuz-lts",
+            "initrd_url": "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/netboot/initramfs-lts",
+            "kernel_args": "modloop=https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/netboot/modloop-lts"
+          }
+        }
+      ]
+    },
+    {
+      "id": "specialized",
+      "name": "Specialized",
+      "entries": [
+        {
+          "id": "proxmox-ve-8",
+          "name": "Proxmox VE 8 (Debian-based)",
+          "os_family": "linux",
+          "os_version": "8",
+          "arch": "amd64",
+          "description": "Proxmox VE 8 — install Debian first via the catalog's debian-12 entry, then add the Proxmox repo via cloud-init runcmd. Direct netboot of the Proxmox ISO is not supported by Proxmox upstream; this entry is a documentation placeholder pointing at the Debian path. URLs intentionally empty.",
+          "media": {}
+        },
+        {
+          "id": "talos-linux",
+          "name": "Talos Linux (Kubernetes OS)",
+          "os_family": "linux",
+          "os_version": "stable",
+          "arch": "amd64",
+          "description": "Talos Linux netboot — minimal immutable Kubernetes-native OS. Configure via Talos machine config served as kernel argument talos.config=<url>.",
+          "media": {
+            "kernel_url": "https://github.com/siderolabs/talos/releases/latest/download/vmlinuz-amd64",
+            "initrd_url": "https://github.com/siderolabs/talos/releases/latest/download/initramfs-amd64.xz",
+            "kernel_args": "talos.platform=metal init_on_alloc=1 slab_nomerge pti=on consoleblank=0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "windows",
+      "name": "Windows",
+      "entries": [
+        {
+          "id": "windows-11-stub",
+          "name": "Windows 11 (custom WIM required)",
+          "os_family": "windows",
+          "os_version": "11",
+          "arch": "amd64",
+          "description": "Windows can't be installed directly from a Microsoft mirror by URL — you need a captured WIM hosted on your own infrastructure plus a customized WinPE. See docs/WINDOWS.md for the capture pipeline. This entry creates the image record; you populate the wimboot/bootwim/install-wim URLs on the image detail page.",
+          "media": {
+            "wimboot_url": "",
+            "bootwim_url": "",
+            "wim_url": ""
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/your-org/deployserver/api/internal/auth"
+	"github.com/your-org/deployserver/api/internal/catalog"
 	"github.com/your-org/deployserver/api/internal/store"
 )
 
@@ -674,6 +675,71 @@ func (h *handlers) deleteMachine(w http.ResponseWriter, r *http.Request) {
 		SubjectID: &id, SubjectKind: "machine",
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- catalog (netboot.xyz-style distro browser) ----------------------
+
+func (h *handlers) listCatalog(w http.ResponseWriter, r *http.Request) {
+	c, err := catalog.Load()
+	if err != nil {
+		http.Error(w, "load catalog: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
+type catalogInstallReq struct {
+	EntryID string `json:"entry_id"`
+	Name    string `json:"name"` // operator-assigned image name; defaults to entry id
+}
+
+func (h *handlers) installFromCatalog(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "*") && !auth.HasPerm(r.Context(), "image.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var req catalogInstallReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	c, err := catalog.Load()
+	if err != nil {
+		http.Error(w, "catalog: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	entry, _, err := c.Lookup(req.EntryID)
+	if err != nil {
+		http.Error(w, "unknown catalog entry id: "+req.EntryID, http.StatusBadRequest)
+		return
+	}
+	name := req.Name
+	if name == "" {
+		name = entry.ID
+	}
+	mediaJSON, _ := json.Marshal(entry.Media)
+	desc := entry.Description
+	id, err := h.store.CreateImage(r.Context(), store.CreateImageInput{
+		Name:        name,
+		OSFamily:    entry.OSFamily,
+		OSVersion:   entry.OSVersion,
+		Arch:        entry.Arch,
+		Description: &desc,
+		Media:       mediaJSON,
+	})
+	if err != nil {
+		http.Error(w, "create: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	uid := auth.UserID(r.Context())
+	_ = h.store.Audit(r.Context(), store.AuditEvent{
+		ActorID: &uid, ActorKind: "user",
+		Action:    "image.installed_from_catalog",
+		SubjectID: &id, SubjectKind: "image",
+		Data: []byte(fmt.Sprintf(`{"catalog_entry_id":"%s"}`, entry.ID)),
+	})
+	img, _ := h.store.GetImage(r.Context(), id)
+	writeJSON(w, http.StatusCreated, img)
 }
 
 // --- GET /api/v1/me --------------------------------------------------

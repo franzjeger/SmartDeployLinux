@@ -225,6 +225,8 @@ func serve() {
 		r.Get("/images/{id}", h.getImage)
 		r.Patch("/images/{id}", h.updateImage)
 		r.Delete("/images/{id}", h.deleteImage)
+		r.Get("/catalog", h.listCatalog)
+		r.Post("/catalog/install", h.installFromCatalog)
 		r.Get("/jobs", h.listJobs)
 		r.Get("/jobs/{id}", h.getJob)
 		r.Get("/audit", h.queryAudit)

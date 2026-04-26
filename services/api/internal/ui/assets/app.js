@@ -1086,7 +1086,10 @@ route("/images", async () => {
       <div class="page-title">
         <div><h1>Images</h1>
           <p class="subtitle">Install media — kernel/initrd URLs (Linux) or wimboot/boot.wim/install.wim URLs (Windows). Point at upstream mirrors or your own HTTP storage; the iPXE chain at deploy time fetches directly from these URLs.</p></div>
-        <div class="page-actions"><button class="btn" id="register-image-btn">+ Register image</button></div>
+        <div class="page-actions">
+          <button class="btn secondary" id="browse-catalog-btn">⊞ Browse catalog</button>
+          <button class="btn" id="register-image-btn">+ Register image</button>
+        </div>
       </div>
       ${imgs.length ? `
         <div class="table-wrap"><table>
@@ -1116,7 +1119,112 @@ route("/images", async () => {
     </div>`;
 
   $("#register-image-btn").addEventListener("click", () => openImageRegisterModal());
+  $("#browse-catalog-btn").addEventListener("click", () => openCatalogBrowser());
 });
+
+async function openCatalogBrowser() {
+  let catalog;
+  try {
+    catalog = await api("GET", "/api/v1/catalog");
+  } catch (e) {
+    toast("Failed to load catalog: " + e.message, "err");
+    return;
+  }
+  let selectedEntry = null;
+  let searchTerm = "";
+
+  const renderBody = () => {
+    const term = searchTerm.toLowerCase();
+    const filteredCats = catalog.categories.map(cat => ({
+      ...cat,
+      entries: cat.entries.filter(e =>
+        !term ||
+        e.name.toLowerCase().includes(term) ||
+        e.id.toLowerCase().includes(term) ||
+        (e.description || "").toLowerCase().includes(term))
+    })).filter(c => c.entries.length);
+
+    return `
+      <div class="search" style="margin-bottom:12px;">
+        <input id="cat-search" placeholder="Search distros…" autofocus value="${escapeHTML(searchTerm)}" autocomplete="off">
+        <span class="muted small">${filteredCats.reduce((n,c)=>n+c.entries.length,0)} of ${catalog.categories.reduce((n,c)=>n+c.entries.length,0)} · catalog v${escapeHTML(catalog.version)}</span>
+      </div>
+      <div style="max-height: 50vh; overflow-y: auto; margin: 0 -4px;">
+      ${filteredCats.map(cat => `
+        <div class="section-title" style="margin: 12px 4px 6px;">${escapeHTML(cat.name)}</div>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 4px; margin: 0 4px;">
+        ${cat.entries.map(e => `
+          <label class="cat-entry" data-id="${escapeHTML(e.id)}" style="display:flex; gap:10px; align-items:flex-start; padding: 10px 12px; border:1px solid var(--border); border-radius: var(--radius); cursor: pointer; ${selectedEntry === e.id ? "border-color: var(--accent); background: var(--panel-2);" : ""}">
+            <input type="radio" name="cat-entry" value="${escapeHTML(e.id)}" ${selectedEntry === e.id ? "checked" : ""} style="margin-top: 2px;">
+            <div style="flex:1;">
+              <div style="font-weight: 500;">${escapeHTML(e.name)} <span class="badge" style="margin-left: 6px;">${escapeHTML(e.os_family)} ${escapeHTML(e.arch)}</span></div>
+              <div class="muted small" style="margin-top: 4px;">${escapeHTML(e.description || "")}</div>
+              ${(!e.media || !Object.values(e.media).filter(Boolean).length) ? `<div class="small" style="color: var(--warn); margin-top: 4px;">⚠ stub — URLs need manual completion after install</div>` : ""}
+            </div>
+          </label>`).join("")}
+        </div>
+      `).join("") || `<div class="empty muted">No matches.</div>`}
+      </div>
+      <div class="row" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft);">
+        <label class="full">Image name in your library (optional)
+          <input id="cat-name" placeholder="leave blank to use catalog id">
+        </label>
+      </div>`;
+  };
+
+  openModal({
+    title: "Browse catalog",
+    body: renderBody(),
+    primary: { label: "Install" },
+    secondary: "Cancel",
+    onPrimary: async modal => {
+      if (!selectedEntry) {
+        toast("Select an entry first", "err");
+        return false;
+      }
+      const customName = $("#cat-name", modal).value.trim();
+      const created = await api("POST", "/api/v1/catalog/install", {
+        entry_id: selectedEntry,
+        name: customName || undefined,
+      });
+      toast(`Installed ${created.name}`, "ok");
+      location.hash = "#/images/" + created.id;
+    },
+  });
+
+  // Wire up search + selection AFTER the modal renders.
+  const root = $("#modal-root");
+  const wireUp = () => {
+    const search = $("#cat-search", root);
+    if (search) {
+      search.addEventListener("input", e => {
+        searchTerm = e.target.value;
+        const body = $(".modal-body", root);
+        body.innerHTML = renderBody();
+        wireUp();
+        const s2 = $("#cat-search", root);
+        if (s2) {
+          s2.focus();
+          s2.setSelectionRange(s2.value.length, s2.value.length);
+        }
+      });
+    }
+    $$(".cat-entry", root).forEach(el => {
+      el.addEventListener("click", () => {
+        selectedEntry = el.dataset.id;
+        $$(".cat-entry", root).forEach(x => {
+          x.style.borderColor = "var(--border)";
+          x.style.background = "";
+          const r = $("input[type=radio]", x);
+          if (r) r.checked = (x === el);
+        });
+        el.style.borderColor = "var(--accent)";
+        el.style.background = "var(--panel-2)";
+      });
+    });
+  };
+  wireUp();
+}
 
 function openImageRegisterModal() {
   openModal({
