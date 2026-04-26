@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/your-org/deployserver/api/internal/auth"
@@ -247,6 +248,103 @@ func (h *handlers) listProfiles(w http.ResponseWriter, r *http.Request) {
 		profs = []store.Profile{}
 	}
 	writeJSON(w, http.StatusOK, profs)
+}
+
+// --- GET /api/v1/images ----------------------------------------------
+
+func (h *handlers) listImages(w http.ResponseWriter, r *http.Request) {
+	imgs, err := h.store.ListImages(r.Context())
+	if err != nil {
+		http.Error(w, "list images: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if imgs == nil {
+		imgs = []store.Image{}
+	}
+	writeJSON(w, http.StatusOK, imgs)
+}
+
+// --- GET /api/v1/jobs ------------------------------------------------
+
+func (h *handlers) listJobs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := store.JobFilter{
+		State: q.Get("state"),
+		Limit: parseLimit(q.Get("limit"), 200),
+	}
+	if v := q.Get("machine"); v != "" {
+		mid, err := uuid.Parse(v)
+		if err != nil {
+			http.Error(w, "bad machine uuid", http.StatusBadRequest)
+			return
+		}
+		f.MachineID = &mid
+	}
+	jobs, err := h.store.ListJobs(r.Context(), f)
+	if err != nil {
+		http.Error(w, "list jobs: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if jobs == nil {
+		jobs = []store.Job{}
+	}
+	writeJSON(w, http.StatusOK, jobs)
+}
+
+// --- GET /api/v1/jobs/{id} -------------------------------------------
+
+func (h *handlers) getJob(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	job, err := h.store.GetJob(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	events, err := h.store.GetJobEvents(r.Context(), id)
+	if err != nil {
+		http.Error(w, "events: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if events == nil {
+		events = []store.JobEvent{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"job": job, "events": events})
+}
+
+// --- DELETE /api/v1/machines/{id} ------------------------------------
+
+func (h *handlers) deleteMachine(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "machine.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.DeleteMachine(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	uid := auth.UserID(r.Context())
+	_ = h.store.Audit(r.Context(), store.AuditEvent{
+		ActorID: &uid, ActorKind: "user", Action: "machine.deleted",
+		SubjectID: &id, SubjectKind: "machine",
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- GET /api/v1/me --------------------------------------------------

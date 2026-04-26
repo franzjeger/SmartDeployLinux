@@ -505,6 +505,171 @@ func (s *Store) ListProfiles(ctx context.Context) ([]Profile, error) {
 	return out, rows.Err()
 }
 
+// --- jobs (deployment_jobs queries used by the UI) -------------------
+
+type Job struct {
+	ID          uuid.UUID  `json:"id"`
+	MachineID   uuid.UUID  `json:"machine_id"`
+	MachineTag  *string    `json:"machine_asset_tag"`
+	ProfileID   uuid.UUID  `json:"profile_id"`
+	ProfileName string     `json:"profile_name"`
+	State       string     `json:"state"`
+	CreatedAt   time.Time  `json:"created_at"`
+	StartedAt   *time.Time `json:"started_at"`
+	FinishedAt  *time.Time `json:"finished_at"`
+}
+
+type JobFilter struct {
+	State     string     // empty = any
+	MachineID *uuid.UUID // nil = any
+	Limit     int
+}
+
+func (s *Store) ListJobs(ctx context.Context, f JobFilter) ([]Job, error) {
+	if f.Limit <= 0 || f.Limit > 1000 {
+		f.Limit = 200
+	}
+	q := `
+		SELECT j.id, j.machine_id, m.asset_tag, j.profile_id, p.name,
+		       j.state::text, j.created_at, j.started_at, j.finished_at
+		FROM deployment_jobs j
+		JOIN machines m ON m.id = j.machine_id
+		JOIN deployment_profiles p ON p.id = j.profile_id
+		WHERE 1=1`
+	args := []any{}
+	if f.State != "" {
+		q += fmt.Sprintf(" AND j.state = $%d::deployment_state", len(args)+1)
+		args = append(args, f.State)
+	}
+	if f.MachineID != nil {
+		q += fmt.Sprintf(" AND j.machine_id = $%d", len(args)+1)
+		args = append(args, *f.MachineID)
+	}
+	q += fmt.Sprintf(" ORDER BY j.created_at DESC LIMIT $%d", len(args)+1)
+	args = append(args, f.Limit)
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Job
+	for rows.Next() {
+		var j Job
+		if err := rows.Scan(&j.ID, &j.MachineID, &j.MachineTag, &j.ProfileID,
+			&j.ProfileName, &j.State, &j.CreatedAt, &j.StartedAt, &j.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+type JobEvent struct {
+	ID      int64     `json:"id"`
+	Phase   string    `json:"phase"`
+	Message string    `json:"message"`
+	At      time.Time `json:"at"`
+}
+
+func (s *Store) GetJob(ctx context.Context, id uuid.UUID) (*Job, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT j.id, j.machine_id, m.asset_tag, j.profile_id, p.name,
+		       j.state::text, j.created_at, j.started_at, j.finished_at
+		FROM deployment_jobs j
+		JOIN machines m ON m.id = j.machine_id
+		JOIN deployment_profiles p ON p.id = j.profile_id
+		WHERE j.id = $1`, id)
+	var j Job
+	if err := row.Scan(&j.ID, &j.MachineID, &j.MachineTag, &j.ProfileID,
+		&j.ProfileName, &j.State, &j.CreatedAt, &j.StartedAt, &j.FinishedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &j, nil
+}
+
+func (s *Store) GetJobEvents(ctx context.Context, jobID uuid.UUID) ([]JobEvent, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, phase, message, at FROM deployment_events
+		WHERE job_id = $1 ORDER BY id ASC`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []JobEvent
+	for rows.Next() {
+		var e JobEvent
+		if err := rows.Scan(&e.ID, &e.Phase, &e.Message, &e.At); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// --- images ----------------------------------------------------------
+
+type Image struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	OSFamily    string    `json:"os_family"`
+	OSVersion   string    `json:"os_version"`
+	Arch        string    `json:"arch"`
+	Description *string   `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	VersionsCount int     `json:"versions_count"`
+}
+
+func (s *Store) ListImages(ctx context.Context) ([]Image, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT i.id, i.name, i.os_family, i.os_version, i.arch, i.description,
+		       i.created_at,
+		       (SELECT count(*) FROM image_versions iv WHERE iv.image_id = i.id)
+		FROM images i ORDER BY i.os_family, i.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Image
+	for rows.Next() {
+		var i Image
+		if err := rows.Scan(&i.ID, &i.Name, &i.OSFamily, &i.OSVersion,
+			&i.Arch, &i.Description, &i.CreatedAt, &i.VersionsCount); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+// --- machine delete --------------------------------------------------
+
+func (s *Store) DeleteMachine(ctx context.Context, id uuid.UUID) error {
+	// Refuse if there are non-terminal deployment_jobs — that's
+	// catching the operator deleting a machine mid-deploy.
+	var pending int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM deployment_jobs
+		WHERE machine_id = $1 AND state IN ('pending','bootstrapped','imaging','post_install')`,
+		id).Scan(&pending); err != nil {
+		return err
+	}
+	if pending > 0 {
+		return fmt.Errorf("machine has %d non-terminal deployment job(s); cancel them first", pending)
+	}
+	tag, err := s.pool.Exec(ctx, `DELETE FROM machines WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // FirstAdminUserID returns the user_id of any user with the admin role,
 // or uuid.Nil if no admin exists yet. Used by the api in dev-mode (no
 // OIDC) to attribute issuance actions to the seeded admin.

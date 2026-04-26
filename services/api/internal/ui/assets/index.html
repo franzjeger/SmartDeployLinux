@@ -7,127 +7,37 @@
 <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
-<header>
-  <h1>deployserver</h1>
-  <nav>
-    <a href="#dash" class="tab active" data-tab="dash">Dashboard</a>
-    <a href="#machines" class="tab" data-tab="machines">Machines</a>
-    <a href="#deploy" class="tab" data-tab="deploy">Issue Code</a>
-    <a href="#audit" class="tab" data-tab="audit">Audit</a>
-    <a href="#sticks" class="tab" data-tab="sticks">Sticks</a>
-    <a href="/healthz" class="tab health" target="_blank">/healthz</a>
-  </nav>
-</header>
-
-<main>
-
-<!-- DASHBOARD -->
-<section id="dash" class="view active">
-  <h2>Dashboard</h2>
-  <div class="grid">
-    <div class="card">
-      <h3>Machines <span class="count" id="m-count">…</span></h3>
-      <p>Registered targets, latest 5:</p>
-      <table class="compact" id="dash-machines"><tbody></tbody></table>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="logo">▲</span> deployserver</div>
+    <nav>
+      <a href="#/" data-route="/" class="nav-item"><span class="ico">⌂</span> Dashboard</a>
+      <a href="#/machines" data-route="/machines" class="nav-item"><span class="ico">▢</span> Machines</a>
+      <a href="#/deploy" data-route="/deploy" class="nav-item"><span class="ico">↗</span> New deployment</a>
+      <a href="#/jobs" data-route="/jobs" class="nav-item"><span class="ico">↻</span> Jobs</a>
+      <a href="#/images" data-route="/images" class="nav-item"><span class="ico">▤</span> Images</a>
+      <a href="#/sticks" data-route="/sticks" class="nav-item"><span class="ico">∎</span> Bootstrap sticks</a>
+      <a href="#/audit" data-route="/audit" class="nav-item"><span class="ico">≡</span> Audit log</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div id="user-info" class="muted small"></div>
+      <a href="https://github.com/franzjeger/SmartDeployLinux" target="_blank" class="muted small">github ↗</a>
     </div>
-    <div class="card">
-      <h3>Recent activity</h3>
-      <table class="compact" id="dash-audit"><tbody></tbody></table>
+  </aside>
+
+  <header class="topbar">
+    <div id="breadcrumb" class="breadcrumb"></div>
+    <div class="topbar-actions">
+      <span id="dev-banner" class="badge warn hidden">DEV MODE — OIDC unconfigured</span>
+      <button id="refresh-btn" class="btn-ghost" title="Refresh current view">↻</button>
     </div>
-  </div>
-</section>
+  </header>
 
-<!-- MACHINES -->
-<section id="machines" class="view">
-  <h2>Machines</h2>
-  <details class="form-card" open>
-    <summary>Register a new machine</summary>
-    <form id="create-machine">
-      <label>Asset tag <input name="asset_tag" required placeholder="lab-01"></label>
-      <label>MAC <input name="mac_primary" placeholder="aa:bb:cc:dd:ee:ff"></label>
-      <label>Vendor <input name="vendor" placeholder="Dell Inc."></label>
-      <label>Model <input name="model" placeholder="Latitude 7440"></label>
-      <label>Default profile
-        <select name="default_profile_id" id="machine-profile-select"></select>
-      </label>
-      <button type="submit">Create</button>
-      <span id="create-result"></span>
-    </form>
-  </details>
-  <table id="machines-table">
-    <thead><tr>
-      <th>Asset tag</th><th>MAC</th><th>Vendor / Model</th><th>Profile</th><th>Created</th><th>ID</th>
-    </tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
+  <main id="content"></main>
+</div>
 
-<!-- ISSUE CODE -->
-<section id="deploy" class="view">
-  <h2>Issue deployment code</h2>
-  <p class="hint">Pick a machine + profile, click <em>Issue</em>. The 6-character
-  code below is what the onsite operator types into the bootstrap stick's
-  TUI. Single-use. Default TTL 4 hours.</p>
-  <form id="issue-form">
-    <label>Machine
-      <select name="machine_id" id="deploy-machine-select" required></select>
-    </label>
-    <label>Profile
-      <select name="profile_id" id="deploy-profile-select" required></select>
-    </label>
-    <label>TTL (hours) <input type="number" name="ttl_hours" value="4" min="1" max="168"></label>
-    <label>Label (optional) <input name="issued_for" placeholder="sent to alice@branch"></label>
-    <button type="submit">Issue</button>
-  </form>
-  <div id="code-result" class="code-result hidden">
-    <h3>Code:</h3>
-    <div class="code" id="issued-code">—</div>
-    <p>Expires <span id="issued-expires">—</span></p>
-    <p class="hint">Hand this code to the onsite operator with the bootstrap stick.</p>
-  </div>
-</section>
-
-<!-- AUDIT -->
-<section id="audit" class="view">
-  <h2>Audit log</h2>
-  <form id="audit-filters">
-    <label>Since <select name="since">
-      <option value="1h">1h</option>
-      <option value="24h" selected>24h</option>
-      <option value="168h">7d</option>
-      <option value="720h">30d</option>
-    </select></label>
-    <label>Action prefix <input name="action" placeholder="auth_code"></label>
-    <button type="submit">Reload</button>
-  </form>
-  <table id="audit-table">
-    <thead><tr>
-      <th>Time</th><th>Action</th><th>Actor</th><th>Subject</th><th>Source IP</th>
-    </tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
-
-<!-- BOOTSTRAP STICKS -->
-<section id="sticks" class="view">
-  <h2>Bootstrap stick inventory</h2>
-  <p class="hint">Sticks are registered after build via
-  <code>deployctl bootstrap-sticks register</code>. The CA fingerprint
-  here is what's pinned on each physical stick — useful during CA rotation.</p>
-  <table id="sticks-table">
-    <thead><tr>
-      <th>Built</th><th>SHA-256 (img)</th><th>Tailnet</th><th>Deploy URL</th><th>CA fp</th><th>Label</th>
-    </tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
-
-</main>
-
-<footer>
-  <span class="muted">SmartdeployLinux · <a href="https://github.com/franzjeger/SmartDeployLinux" target="_blank">github</a></span>
-  <span id="warn-banner" class="warn hidden">⚠ OIDC not configured — running in dev mode (all requests pass perm checks).</span>
-</footer>
+<div id="modal-root"></div>
+<div id="toast-root"></div>
 
 <script src="/assets/app.js"></script>
 </body>
