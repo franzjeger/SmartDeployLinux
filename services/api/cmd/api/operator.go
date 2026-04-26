@@ -46,10 +46,16 @@ func (h *handlers) issueDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	uid := auth.UserID(r.Context())
 	if uid == uuid.Nil {
-		// Dev mode (no OIDC): we still need an issued_by; use a synthetic
-		// dev user. Document in OPERATIONS.md.
-		http.Error(w, "no authenticated principal; configure OIDC", http.StatusUnauthorized)
-		return
+		// Dev mode (no OIDC): fall back to the first seeded admin so the
+		// UI works without an IdP. The operator running `api seed-admin
+		// <email>` chose this account; using it here is the documented
+		// dev-mode behaviour.
+		admin, err := h.store.FirstAdminUserID(r.Context())
+		if err != nil {
+			http.Error(w, "no admin user; run `api seed-admin <email>` first", http.StatusUnauthorized)
+			return
+		}
+		uid = admin
 	}
 
 	var req issueReq
@@ -227,6 +233,35 @@ func parseLimit(s string, def int) int {
 		return def
 	}
 	return n
+}
+
+// --- GET /api/v1/profiles --------------------------------------------
+
+func (h *handlers) listProfiles(w http.ResponseWriter, r *http.Request) {
+	profs, err := h.store.ListProfiles(r.Context())
+	if err != nil {
+		http.Error(w, "list profiles: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if profs == nil {
+		profs = []store.Profile{}
+	}
+	writeJSON(w, http.StatusOK, profs)
+}
+
+// --- GET /api/v1/me --------------------------------------------------
+//
+// Returns the calling principal. In dev mode (no OIDC), reports
+// dev_mode=true so the UI can show the warning banner.
+
+func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
+	uid := auth.UserID(r.Context())
+	dev := h.verifier == nil
+	out := map[string]any{
+		"user_id":  uid,
+		"dev_mode": dev,
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // Suppress unused-import errors when handler bodies grow/shrink.

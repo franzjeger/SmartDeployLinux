@@ -471,6 +471,58 @@ func (s *Store) VerifyOneShotToken(ctx context.Context, tokenHash string, fromIP
 	return jobID, nil
 }
 
+// --- profiles --------------------------------------------------------
+
+type Profile struct {
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	ImageID      uuid.UUID `json:"image_id"`
+	ImageName    string    `json:"image_name"`
+	OSFamily     string    `json:"os_family"`
+	OSVersion    string    `json:"os_version"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (s *Store) ListProfiles(ctx context.Context) ([]Profile, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT p.id, p.name, p.image_id, i.name, i.os_family, i.os_version, p.created_at
+		FROM deployment_profiles p
+		JOIN images i ON i.id = p.image_id
+		ORDER BY p.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Profile
+	for rows.Next() {
+		var p Profile
+		if err := rows.Scan(&p.ID, &p.Name, &p.ImageID, &p.ImageName,
+			&p.OSFamily, &p.OSVersion, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// FirstAdminUserID returns the user_id of any user with the admin role,
+// or uuid.Nil if no admin exists yet. Used by the api in dev-mode (no
+// OIDC) to attribute issuance actions to the seeded admin.
+func (s *Store) FirstAdminUserID(ctx context.Context) (uuid.UUID, error) {
+	var id uuid.UUID
+	row := s.pool.QueryRow(ctx, `
+		SELECT user_id FROM user_roles
+		WHERE role_id = '00000000-0000-0000-0000-000000000001'
+		ORDER BY user_id LIMIT 1`)
+	if err := row.Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, err
+	}
+	return id, nil
+}
+
 // --- bootstrap sticks inventory --------------------------------------
 
 type BootstrapStick struct {

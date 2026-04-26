@@ -33,10 +33,14 @@ services:
 
   api:
     ports:
-      - "18080:8080"           # public listener (8090-92 taken by librespeed/explorer/census)
+      # Bind only on the LAN interface (192.168.200.23). The Tailscale
+      # interface (100.85.18.119) is reserved for `tailscale serve`,
+      # which proxies https://docker.tailb0b06a.ts.net:18080/ → here.
+      # Matches the convention used by librespeed/explorer/etc.
+      - "192.168.200.23:18080:8080"
     environment:
       DEPLOY_FQDN: ${DEPLOY_FQDN:-docker.tailb0b06a.ts.net}
-      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://docker.tailb0b06a.ts.net:18080}
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-https://docker.tailb0b06a.ts.net:18080}
 
   http-boot:
     # No host port — only reachable via the docker network.
