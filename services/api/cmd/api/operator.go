@@ -250,6 +250,208 @@ func (h *handlers) listProfiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, profs)
 }
 
+// --- profiles CRUD ---------------------------------------------------
+
+type createProfileReq struct {
+	Name           string                 `json:"name"`
+	ImageID        string                 `json:"image_id"`
+	AnswerFileVars map[string]interface{} `json:"answer_file_vars"`
+}
+
+func (h *handlers) createProfile(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "*") && !auth.HasPerm(r.Context(), "image.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var req createProfileReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	imgID, err := uuid.Parse(req.ImageID)
+	if err != nil {
+		http.Error(w, "bad image_id", http.StatusBadRequest)
+		return
+	}
+	in := store.CreateProfileInput{Name: req.Name, ImageID: imgID}
+	if req.AnswerFileVars != nil {
+		in.AnswerFileVars, _ = json.Marshal(req.AnswerFileVars)
+	}
+	id, err := h.store.CreateProfile(r.Context(), in)
+	if err != nil {
+		http.Error(w, "create: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	uid := auth.UserID(r.Context())
+	_ = h.store.Audit(r.Context(), store.AuditEvent{
+		ActorID: &uid, ActorKind: "user", Action: "profile.created",
+		SubjectID: &id, SubjectKind: "deployment_profile",
+	})
+	prof, _ := h.store.GetProfile(r.Context(), id)
+	writeJSON(w, http.StatusCreated, prof)
+}
+
+type updateProfileReq struct {
+	Name           *string                 `json:"name"`
+	ImageID        *string                 `json:"image_id"`
+	AnswerFileVars *map[string]interface{} `json:"answer_file_vars"`
+}
+
+func (h *handlers) updateProfile(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "*") && !auth.HasPerm(r.Context(), "image.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	var req updateProfileReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	in := store.UpdateProfileInput{Name: req.Name}
+	if req.ImageID != nil {
+		imgID, err := uuid.Parse(*req.ImageID)
+		if err != nil {
+			http.Error(w, "bad image_id", http.StatusBadRequest)
+			return
+		}
+		in.ImageID = &imgID
+	}
+	if req.AnswerFileVars != nil {
+		b, _ := json.Marshal(*req.AnswerFileVars)
+		in.AnswerFileVars = b
+	}
+	if err := h.store.UpdateProfile(r.Context(), id, in); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "update: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	uid := auth.UserID(r.Context())
+	_ = h.store.Audit(r.Context(), store.AuditEvent{
+		ActorID: &uid, ActorKind: "user", Action: "profile.updated",
+		SubjectID: &id, SubjectKind: "deployment_profile",
+	})
+	prof, _ := h.store.GetProfile(r.Context(), id)
+	writeJSON(w, http.StatusOK, prof)
+}
+
+func (h *handlers) deleteProfile(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "*") && !auth.HasPerm(r.Context(), "image.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.DeleteProfile(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	uid := auth.UserID(r.Context())
+	_ = h.store.Audit(r.Context(), store.AuditEvent{
+		ActorID: &uid, ActorKind: "user", Action: "profile.deleted",
+		SubjectID: &id, SubjectKind: "deployment_profile",
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /api/v1/profiles/{id} returns the profile + vars + templates list.
+func (h *handlers) getProfile(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	prof, err := h.store.GetProfile(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	rawVars, _ := h.store.GetProfileVars(r.Context(), id)
+	templates, _ := h.store.ListProfileTemplates(r.Context(), id)
+	if templates == nil {
+		templates = []store.AnswerFileTemplate{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"profile":           prof,
+		"answer_file_vars":  json.RawMessage(rawVars),
+		"templates":         templates,
+	})
+}
+
+type upsertTemplateReq struct {
+	Kind string `json:"kind"`
+	Body string `json:"body"`
+}
+
+func (h *handlers) upsertProfileTemplate(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "*") && !auth.HasPerm(r.Context(), "image.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	pid, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	var req upsertTemplateReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024*1024)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	tid, err := h.store.UpsertProfileTemplate(r.Context(), pid, req.Kind, req.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	uid := auth.UserID(r.Context())
+	_ = h.store.Audit(r.Context(), store.AuditEvent{
+		ActorID: &uid, ActorKind: "user", Action: "profile.template_upserted",
+		SubjectID: &pid, SubjectKind: "deployment_profile",
+		Data: []byte(fmt.Sprintf(`{"kind":"%s","template_id":"%s"}`, req.Kind, tid)),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"id": tid, "kind": req.Kind})
+}
+
+func (h *handlers) deleteProfileTemplate(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "*") && !auth.HasPerm(r.Context(), "image.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	pid, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	kind := chi.URLParam(r, "kind")
+	if err := h.store.DeleteProfileTemplate(r.Context(), pid, kind); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- GET /api/v1/images ----------------------------------------------
 
 func (h *handlers) listImages(w http.ResponseWriter, r *http.Request) {

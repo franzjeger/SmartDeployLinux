@@ -677,6 +677,353 @@ route("/jobs/:id", async ({ id }) => {
   }
 });
 
+// ---------- views: Profiles ----------
+
+route("/profiles", async () => {
+  setBreadcrumb([{label: "Profiles"}]);
+  const [profiles, images] = await Promise.all([
+    api("GET", "/api/v1/profiles"),
+    api("GET", "/api/v1/images"),
+  ]);
+  $("#content").innerHTML = `
+    <div class="page">
+      <div class="page-title">
+        <div><h1>Deployment profiles</h1>
+          <p class="subtitle">A profile binds an image to an answer-file template (autoinstall, kickstart, unattend, etc.) and per-deploy variables.</p></div>
+        <div class="page-actions"><button class="btn" id="new-profile-btn">+ New profile</button></div>
+      </div>
+      ${profiles.length ? `
+        <div class="table-wrap"><table>
+          <thead><tr><th>Name</th><th>Image</th><th>OS</th><th>Created</th><th></th></tr></thead>
+          <tbody>
+          ${profiles.map(p => `
+            <tr onclick="location.hash='#/profiles/${p.id}'">
+              <td><strong>${escapeHTML(p.name)}</strong></td>
+              <td>${escapeHTML(p.image_name)}</td>
+              <td>${escapeHTML(p.os_family)} ${escapeHTML(p.os_version)}</td>
+              <td class="mono small muted">${fmtTime(p.created_at)}</td>
+              <td class="actions"><a class="btn small secondary" href="#/profiles/${p.id}">Edit</a></td>
+            </tr>`).join("")}
+          </tbody>
+        </table></div>` : `<div class="card"><div class="empty muted">No profiles yet.</div></div>`}
+    </div>`;
+
+  $("#new-profile-btn").addEventListener("click", () => openProfileCreateModal(images));
+});
+
+function openProfileCreateModal(images) {
+  if (!images.length) {
+    toast("Upload an image first via the Images tab", "err");
+    return;
+  }
+  const imgOptions = images.map(i =>
+    `<option value="${escapeHTML(i.id)}">${escapeHTML(i.name)} — ${escapeHTML(i.os_family)} ${escapeHTML(i.os_version)} ${escapeHTML(i.arch)}</option>`).join("");
+  openModal({
+    title: "New deployment profile",
+    body: `
+      <form id="profile-form">
+        <div class="row">
+          <label class="full">Name <input name="name" required placeholder="ubuntu-2404-engineering"></label>
+        </div>
+        <div class="row">
+          <label class="full">Image
+            <select name="image_id" required>${imgOptions}</select>
+          </label>
+        </div>
+        <div class="row">
+          <label class="full">Variables (JSON, optional)
+            <textarea name="vars" rows="4" placeholder='{"hostname_template":"{{asset_tag}}","timezone":"UTC"}'>{}</textarea>
+          </label>
+        </div>
+      </form>`,
+    primary: { label: "Create" },
+    secondary: "Cancel",
+    onPrimary: async modal => {
+      const fd = new FormData($("#profile-form", modal));
+      let vars = {};
+      const v = fd.get("vars");
+      if (v) {
+        try { vars = JSON.parse(v); }
+        catch (e) { throw new Error("Variables: invalid JSON"); }
+      }
+      const created = await api("POST", "/api/v1/profiles", {
+        name: fd.get("name"),
+        image_id: fd.get("image_id"),
+        answer_file_vars: vars,
+      });
+      toast(`Created profile ${created.name}`, "ok");
+      location.hash = "#/profiles/" + created.id;
+    },
+  });
+}
+
+// ---------- views: Profile detail / editor ----------
+
+const TEMPLATE_KINDS = [
+  { id: "autoinstall", label: "Ubuntu autoinstall (cloud-init)", os: ["linux"] },
+  { id: "kickstart",   label: "Kickstart (RHEL/Rocky/Alma/Fedora)", os: ["linux"] },
+  { id: "preseed",     label: "Debian preseed", os: ["linux"] },
+  { id: "cloud-init",  label: "Generic cloud-init user-data", os: ["linux"] },
+  { id: "ignition",    label: "Ignition (Fedora CoreOS / Flatcar)", os: ["linux"] },
+  { id: "unattend",    label: "Windows unattend.xml", os: ["windows"] },
+];
+
+route("/profiles/:id", async ({ id }) => {
+  setBreadcrumb([{label:"Profiles", href:"#/profiles"}, {label: id.slice(0,8)+"…"}]);
+  const [data, images] = await Promise.all([
+    api("GET", `/api/v1/profiles/${id}`),
+    api("GET", "/api/v1/images"),
+  ]);
+  const p = data.profile;
+  const vars = data.answer_file_vars || {};
+  const templates = data.templates || [];
+  const tplByKind = Object.fromEntries(templates.map(t => [t.kind, t]));
+
+  // Filter applicable kinds by OS family.
+  const applicable = TEMPLATE_KINDS.filter(k => k.os.includes(p.os_family));
+
+  let activeKind = applicable[0]?.id || "autoinstall";
+  let editingMeta = false;
+
+  const render = () => {
+    $("#content").innerHTML = `
+      <div class="page">
+        <div class="page-title">
+          <div>
+            <h1>${escapeHTML(p.name)}</h1>
+            <p class="subtitle">${escapeHTML(p.image_name)} · ${escapeHTML(p.os_family)} ${escapeHTML(p.os_version)} · created ${fmtTime(p.created_at)}</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn secondary" id="edit-meta">Edit metadata</button>
+            <button class="btn danger" id="delete-profile">Delete</button>
+          </div>
+        </div>
+
+        <div class="section-title">Variables</div>
+        <div class="card">
+          <p class="hint muted small">Available in templates as <code>{{ vars.&lt;key&gt; }}</code>. Plus built-ins:
+            <code>{{ asset_tag }}</code>, <code>{{ machine_id }}</code>, <code>{{ deploy_fqdn }}</code>, <code>{{ job_id }}</code>, <code>{{ one_shot_token }}</code>.</p>
+          <textarea id="vars-editor" rows="6" style="width:100%;">${escapeHTML(JSON.stringify(vars, null, 2))}</textarea>
+          <div class="btn-row" style="margin-top: 8px;">
+            <button class="btn small" id="vars-save">Save vars</button>
+            <span id="vars-status" class="muted small"></span>
+          </div>
+        </div>
+
+        <div class="section-title">Answer file templates</div>
+        <div class="card" style="padding: 0;">
+          <div class="filter-chips" style="padding: 12px 16px; border-bottom: 1px solid var(--border-soft);">
+            ${applicable.map(k => `
+              <a class="chip ${k.id === activeKind ? "active" : ""} tpl-tab" data-kind="${k.id}" href="#">
+                ${escapeHTML(k.label)}${tplByKind[k.id] ? " ●" : ""}
+              </a>`).join("")}
+          </div>
+          <div style="padding: 16px;">
+            <textarea id="tpl-editor" rows="22" style="width:100%; font-family: var(--mono); font-size: 12.5px;">${escapeHTML(tplByKind[activeKind]?.body || defaultTemplateFor(activeKind))}</textarea>
+            <div class="btn-row" style="margin-top: 8px; justify-content: space-between;">
+              <div>
+                <button class="btn small" id="tpl-save">Save template</button>
+                ${tplByKind[activeKind] ? `<button class="btn small danger" id="tpl-delete">Delete template</button>` : ""}
+              </div>
+              <span id="tpl-status" class="muted small">${tplByKind[activeKind] ? `Last saved ${fmtTime(tplByKind[activeKind].updated_at)}` : "Not yet saved"}</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    $$("#content .tpl-tab").forEach(t => t.addEventListener("click", e => {
+      e.preventDefault();
+      activeKind = t.dataset.kind;
+      render();
+    }));
+
+    $("#vars-save").addEventListener("click", async () => {
+      const status = $("#vars-status");
+      status.textContent = "Saving…"; status.className = "muted small";
+      try {
+        const parsed = JSON.parse($("#vars-editor").value);
+        await api("PATCH", `/api/v1/profiles/${id}`, { answer_file_vars: parsed });
+        status.textContent = "Saved"; status.className = "small";
+        toast("Variables saved", "ok");
+      } catch (e) {
+        status.textContent = "Error: " + e.message; status.className = "err small";
+      }
+    });
+
+    $("#tpl-save").addEventListener("click", async () => {
+      const body = $("#tpl-editor").value;
+      const status = $("#tpl-status");
+      status.textContent = "Saving…";
+      try {
+        await api("PUT", `/api/v1/profiles/${id}/templates`, { kind: activeKind, body });
+        toast(`Saved ${activeKind} template`, "ok");
+        navigate(); // reload to refresh tplByKind state
+      } catch (e) {
+        status.textContent = "Error: " + e.message;
+        toast(e.message, "err");
+      }
+    });
+
+    const del = $("#tpl-delete");
+    if (del) del.addEventListener("click", async () => {
+      const ok = await confirmModal({
+        title: "Delete template",
+        message: `Delete the ${activeKind} template for ${p.name}?`,
+        danger: true, primaryLabel: "Delete",
+      });
+      if (!ok) return;
+      try {
+        await api("DELETE", `/api/v1/profiles/${id}/templates/${activeKind}`);
+        toast("Template deleted", "ok");
+        navigate();
+      } catch (e) { toast(e.message, "err"); }
+    });
+
+    $("#delete-profile").addEventListener("click", async () => {
+      const ok = await confirmModal({
+        title: "Delete profile",
+        message: `Delete profile "${p.name}"? This is permanent.`,
+        danger: true, primaryLabel: "Delete",
+      });
+      if (!ok) return;
+      try {
+        await api("DELETE", `/api/v1/profiles/${id}`);
+        toast("Profile deleted", "ok");
+        location.hash = "#/profiles";
+      } catch (e) { toast(e.message, "err"); }
+    });
+
+    $("#edit-meta").addEventListener("click", () => openProfileEditMetaModal(p, images, () => navigate()));
+  };
+  render();
+});
+
+function openProfileEditMetaModal(profile, images, onSaved) {
+  const imgOptions = images.map(i =>
+    `<option value="${escapeHTML(i.id)}" ${i.id===profile.image_id?"selected":""}>${escapeHTML(i.name)} — ${escapeHTML(i.os_family)} ${escapeHTML(i.os_version)} ${escapeHTML(i.arch)}</option>`).join("");
+  openModal({
+    title: "Edit profile metadata",
+    body: `
+      <form id="profile-meta-form">
+        <div class="row">
+          <label class="full">Name <input name="name" value="${escapeHTML(profile.name)}" required></label>
+        </div>
+        <div class="row">
+          <label class="full">Image
+            <select name="image_id">${imgOptions}</select>
+          </label>
+        </div>
+      </form>`,
+    primary: { label: "Save" },
+    secondary: "Cancel",
+    onPrimary: async modal => {
+      const fd = new FormData($("#profile-meta-form", modal));
+      const body = {};
+      if (fd.get("name") !== profile.name) body.name = fd.get("name");
+      if (fd.get("image_id") !== profile.image_id) body.image_id = fd.get("image_id");
+      if (Object.keys(body).length === 0) { toast("No changes", ""); return; }
+      await api("PATCH", `/api/v1/profiles/${profile.id}`, body);
+      toast("Profile updated", "ok");
+      onSaved && onSaved();
+    },
+  });
+}
+
+function defaultTemplateFor(kind) {
+  switch (kind) {
+    case "autoinstall":
+      return `#cloud-config
+autoinstall:
+  version: 1
+  identity:
+    hostname: {{ vars.hostname_template | default(asset_tag) }}
+    username: ubuntu
+    # mkpasswd -m sha-512
+    password: '$6$rounds=4096$REPLACE_ME'
+  ssh:
+    install-server: yes
+    authorized-keys: {{ vars.authorized_keys | default([]) | toJSON }}
+  storage:
+    layout:
+      name: lvm
+  packages:
+    - openssh-server
+    - python3-minimal
+  late-commands:
+    - curtin in-target -- bash -c 'curl -sf {{ deploy_fqdn }}/v1/jobs/{{ job_id }}/events -X POST -H "Authorization: Bearer {{ one_shot_token }}" -H "Content-Type: application/json" --data "{\\"phase\\":\\"completed\\",\\"message\\":\\"autoinstall finished\\"}" || true'
+`;
+    case "kickstart":
+      return `text
+lang en_US.UTF-8
+keyboard us
+timezone {{ vars.timezone | default("UTC") }}
+network --hostname={{ asset_tag }} --bootproto=dhcp
+rootpw --iscrypted REPLACE_ME
+authselect select sssd
+%post
+curl -sf "{{ deploy_fqdn }}/v1/jobs/{{ job_id }}/events" \\
+  -H "Authorization: Bearer {{ one_shot_token }}" \\
+  -H "Content-Type: application/json" \\
+  --data '{"phase":"completed","message":"kickstart done"}' || true
+%end
+`;
+    case "preseed":
+      return `d-i debian-installer/locale string en_US.UTF-8
+d-i netcfg/get_hostname string {{ asset_tag }}
+d-i passwd/user-fullname string {{ vars.full_name | default("Operator") }}
+d-i passwd/username string {{ vars.username | default("ubuntu") }}
+d-i passwd/user-password-crypted password REPLACE_ME
+d-i preseed/late_command string in-target curl -sf \\
+  -H "Authorization: Bearer {{ one_shot_token }}" \\
+  -H "Content-Type: application/json" \\
+  --data '{"phase":"completed","message":"preseed done"}' \\
+  "{{ deploy_fqdn }}/v1/jobs/{{ job_id }}/events" || true
+`;
+    case "cloud-init":
+      return `#cloud-config
+hostname: {{ asset_tag }}
+timezone: {{ vars.timezone | default("UTC") }}
+runcmd:
+  - curl -sf "{{ deploy_fqdn }}/v1/jobs/{{ job_id }}/events" -H "Authorization: Bearer {{ one_shot_token }}" -H "Content-Type: application/json" --data '{"phase":"completed","message":"cloud-init done"}' || true
+`;
+    case "ignition":
+      return `{
+  "ignition": { "version": "3.4.0" },
+  "passwd": {
+    "users": [
+      { "name": "core", "sshAuthorizedKeys": {{ vars.authorized_keys | default([]) | toJSON }} }
+    ]
+  },
+  "storage": {},
+  "systemd": {}
+}
+`;
+    case "unattend":
+      return `<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <ComputerName>{{ asset_tag | upper }}</ComputerName>
+      <TimeZone>{{ vars.timezone | default("UTC") }}</TimeZone>
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>Administrator</Name>
+            <Password>
+              <Value>REPLACE_ME_BASE64_UTF16LE</Value>
+              <PlainText>false</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+    </component>
+  </settings>
+</unattend>
+`;
+  }
+  return "";
+}
+
 // ---------- views: Images ----------
 
 route("/images", async () => {

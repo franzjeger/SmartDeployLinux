@@ -670,6 +670,189 @@ func (s *Store) DeleteMachine(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// GetProfile returns a single profile, including its image join.
+func (s *Store) GetProfile(ctx context.Context, id uuid.UUID) (*Profile, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT p.id, p.name, p.image_id, i.name, i.os_family, i.os_version, p.created_at
+		FROM deployment_profiles p
+		JOIN images i ON i.id = p.image_id
+		WHERE p.id = $1`, id)
+	var p Profile
+	if err := row.Scan(&p.ID, &p.Name, &p.ImageID, &p.ImageName,
+		&p.OSFamily, &p.OSVersion, &p.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
+// GetProfileVars returns the raw JSONB answer_file_vars for a profile.
+func (s *Store) GetProfileVars(ctx context.Context, id uuid.UUID) ([]byte, error) {
+	var vars []byte
+	row := s.pool.QueryRow(ctx, `SELECT answer_file_vars FROM deployment_profiles WHERE id = $1`, id)
+	if err := row.Scan(&vars); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return vars, nil
+}
+
+type CreateProfileInput struct {
+	Name           string
+	ImageID        uuid.UUID
+	AnswerFileVars []byte // JSONB
+}
+
+func (s *Store) CreateProfile(ctx context.Context, in CreateProfileInput) (uuid.UUID, error) {
+	if in.Name == "" {
+		return uuid.Nil, errors.New("name required")
+	}
+	if len(in.AnswerFileVars) == 0 {
+		in.AnswerFileVars = []byte(`{}`)
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO deployment_profiles (name, image_id, answer_file_vars)
+		VALUES ($1, $2, $3::jsonb)
+		RETURNING id`, in.Name, in.ImageID, in.AnswerFileVars).Scan(&id)
+	return id, err
+}
+
+type UpdateProfileInput struct {
+	Name           *string
+	ImageID        *uuid.UUID
+	AnswerFileVars []byte // pass nil to leave unchanged; pass `{}` to clear
+}
+
+func (s *Store) UpdateProfile(ctx context.Context, id uuid.UUID, in UpdateProfileInput) error {
+	// Build a dynamic UPDATE so callers can patch any subset.
+	sets := []string{}
+	args := []any{id}
+	if in.Name != nil {
+		sets = append(sets, fmt.Sprintf("name = $%d", len(args)+1))
+		args = append(args, *in.Name)
+	}
+	if in.ImageID != nil {
+		sets = append(sets, fmt.Sprintf("image_id = $%d", len(args)+1))
+		args = append(args, *in.ImageID)
+	}
+	if in.AnswerFileVars != nil {
+		sets = append(sets, fmt.Sprintf("answer_file_vars = $%d::jsonb", len(args)+1))
+		args = append(args, in.AnswerFileVars)
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	q := "UPDATE deployment_profiles SET " + strings.Join(sets, ", ") + " WHERE id = $1"
+	tag, err := s.pool.Exec(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteProfile(ctx context.Context, id uuid.UUID) error {
+	// Refuse if any non-terminal job references this profile.
+	var pending int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM deployment_jobs
+		WHERE profile_id = $1 AND state IN ('pending','bootstrapped','imaging','post_install')`,
+		id).Scan(&pending); err != nil {
+		return err
+	}
+	if pending > 0 {
+		return fmt.Errorf("profile has %d non-terminal job(s); cancel them first", pending)
+	}
+	// Refuse if any machine has this as default_profile_id.
+	var refs int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM machines WHERE default_profile_id = $1`, id).Scan(&refs); err != nil {
+		return err
+	}
+	if refs > 0 {
+		return fmt.Errorf("profile is default for %d machine(s); reassign them first", refs)
+	}
+	tag, err := s.pool.Exec(ctx, `DELETE FROM deployment_profiles WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// --- answer file templates -------------------------------------------
+
+type AnswerFileTemplate struct {
+	ID        uuid.UUID `json:"id"`
+	ProfileID uuid.UUID `json:"profile_id"`
+	Kind      string    `json:"kind"` // unattend|autoinstall|kickstart|preseed|ignition|cloud-init
+	Body      string    `json:"body"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (s *Store) ListProfileTemplates(ctx context.Context, profileID uuid.UUID) ([]AnswerFileTemplate, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, profile_id, kind, body, updated_at
+		FROM answer_file_templates
+		WHERE profile_id = $1
+		ORDER BY kind`, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AnswerFileTemplate
+	for rows.Next() {
+		var t AnswerFileTemplate
+		if err := rows.Scan(&t.ID, &t.ProfileID, &t.Kind, &t.Body, &t.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// UpsertProfileTemplate inserts or replaces the template body for the given
+// (profile_id, kind) pair. Returns the row id.
+func (s *Store) UpsertProfileTemplate(ctx context.Context, profileID uuid.UUID, kind, body string) (uuid.UUID, error) {
+	allowed := map[string]bool{
+		"unattend": true, "autoinstall": true, "kickstart": true,
+		"preseed": true, "ignition": true, "cloud-init": true,
+	}
+	if !allowed[kind] {
+		return uuid.Nil, fmt.Errorf("unknown template kind %q", kind)
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO answer_file_templates (profile_id, kind, body)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (profile_id, kind) DO UPDATE
+		   SET body = EXCLUDED.body, updated_at = now()
+		RETURNING id`, profileID, kind, body).Scan(&id)
+	return id, err
+}
+
+func (s *Store) DeleteProfileTemplate(ctx context.Context, profileID uuid.UUID, kind string) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM answer_file_templates WHERE profile_id = $1 AND kind = $2`,
+		profileID, kind)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // FirstAdminUserID returns the user_id of any user with the admin role,
 // or uuid.Nil if no admin exists yet. Used by the api in dev-mode (no
 // OIDC) to attribute issuance actions to the seeded admin.
