@@ -122,15 +122,18 @@ func (s *Store) MigrateUp(ctx context.Context) error {
 // --- machines ---------------------------------------------------------
 
 type Machine struct {
-	ID                uuid.UUID
-	AssetTag          *string
-	MACPrimary        *string
-	UUIDSMBIOS        *uuid.UUID
-	Vendor            *string
-	Model             *string
-	DefaultProfileID  *uuid.UUID
-	Attributes        []byte
-	CreatedAt         time.Time
+	ID               uuid.UUID
+	AssetTag         *string
+	MACPrimary       *string
+	UUIDSMBIOS       *uuid.UUID
+	Vendor           *string
+	Model            *string
+	DefaultProfileID *uuid.UUID
+	// RawMessage (not []byte) so API responses carry the attributes as a
+	// JSON object instead of base64 — the UI reads site + hardware
+	// inventory out of it.
+	Attributes json.RawMessage
+	CreatedAt  time.Time
 }
 
 func (s *Store) GetMachine(ctx context.Context, id uuid.UUID) (*Machine, error) {
@@ -191,6 +194,45 @@ type CreateMachineInput struct {
 	Model            *string
 	DefaultProfileID *uuid.UUID
 	Attributes       []byte
+}
+
+// UpdateMachineInput carries partial updates: nil means "leave as is".
+// ClearDefaultProfile distinguishes "unset the profile" from "no change"
+// (both would otherwise be a nil pointer).
+type UpdateMachineInput struct {
+	AssetTag            *string
+	MACPrimary          *string
+	Vendor              *string
+	Model               *string
+	DefaultProfileID    *uuid.UUID
+	ClearDefaultProfile bool
+	Attributes          []byte // replaces attributes wholesale when non-nil
+}
+
+func (s *Store) UpdateMachine(ctx context.Context, id uuid.UUID, in UpdateMachineInput) (*Machine, error) {
+	var profileArg any
+	if in.DefaultProfileID != nil {
+		profileArg = *in.DefaultProfileID
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE machines SET
+			asset_tag          = COALESCE($2, asset_tag),
+			mac_primary        = COALESCE($3::macaddr, mac_primary),
+			vendor             = COALESCE($4, vendor),
+			model              = COALESCE($5, model),
+			default_profile_id = CASE WHEN $7 THEN NULL
+			                          ELSE COALESCE($6::uuid, default_profile_id) END,
+			attributes         = COALESCE($8::jsonb, attributes)
+		WHERE id = $1`,
+		id, in.AssetTag, in.MACPrimary, in.Vendor, in.Model,
+		profileArg, in.ClearDefaultProfile, in.Attributes)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return s.GetMachine(ctx, id)
 }
 
 func (s *Store) ListMachines(ctx context.Context, limit, offset int) ([]Machine, error) {

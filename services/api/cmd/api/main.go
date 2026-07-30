@@ -255,6 +255,7 @@ func serve() {
 		r.Get("/machines", h.listMachines)
 		r.Post("/machines", h.createMachine)
 		r.Get("/machines/{id}", h.getMachine)
+		r.Patch("/machines/{id}", h.updateMachine)
 		r.Delete("/machines/{id}", h.deleteMachine)
 		r.Post("/machines/{id}/wake", h.wakeMachine)
 		r.Get("/machines/{id}/wake", h.listWakes)

@@ -603,6 +603,7 @@ route("/machines/:id", async ({ id }) => {
           <a class="btn" href="#/deploy?machine=${id}">Deploy</a>
           <button class="btn secondary" id="wake-machine">Wake</button>
           <button class="btn secondary" id="capture-machine">Capture golden image</button>
+          <button class="btn secondary" id="edit-machine">Edit</button>
           <button class="btn danger" id="delete-machine">Delete</button>
         </div>
       </div>
@@ -615,13 +616,90 @@ route("/machines/:id", async ({ id }) => {
           <dt>Vendor</dt>         <dd>${escapeHTML(m.Vendor || "—")}</dd>
           <dt>Model</dt>          <dd>${escapeHTML(m.Model || "—")}</dd>
           <dt>Default profile</dt><dd>${escapeHTML(profById[m.DefaultProfileID] || "—")}</dd>
+          <dt>Site</dt>           <dd>${escapeHTML((m.Attributes && m.Attributes.site) || "default")}</dd>
           <dt>Registered</dt>     <dd class="mono">${fmtAbsolute(m.CreatedAt)}</dd>
         </dl>
       </div>
 
+      ${(() => {
+        const hw = m.Attributes && m.Attributes.hardware;
+        if (!hw) return "";
+        const pci = Array.isArray(hw.pci) ? hw.pci : [];
+        return `
+          <div class="section-title">Hardware inventory <span class="muted small" style="font-weight:normal;text-transform:none;letter-spacing:0;">reported by the last deployment</span></div>
+          <div class="card"><dl class="detail-grid">
+            <dt>DMI vendor</dt>    <dd>${escapeHTML(hw.dmi_vendor || "—")}</dd>
+            <dt>DMI product</dt>   <dd>${escapeHTML(hw.dmi_product || "—")}</dd>
+            <dt>Baseboard</dt>     <dd class="mono">${escapeHTML(hw.dmi_baseboard || "—")}</dd>
+            <dt>PCI devices</dt>   <dd class="mono small">${pci.length
+              ? pci.map(p => escapeHTML(`${p.vid}:${p.did}`)).join(", ")
+              : "—"}</dd>
+          </dl></div>`;
+      })()}
+
       <div class="section-title">Deployment history</div>
       ${jobs.length ? jobsTable(jobs) : `<div class="card"><div class="empty muted">No deployments yet for this machine.</div></div>`}
+
+      <div class="section-title">Wake requests</div>
+      <div id="wake-history" class="card"><div class="muted small">Loading…</div></div>
     </div>`;
+
+  api("GET", `/api/v1/machines/${id}/wake`).then(wakes => {
+    $("#wake-history").innerHTML = wakes.length ? `
+      <table><thead><tr><th>Scheduled</th><th>Site</th><th>Status</th></tr></thead><tbody>
+        ${wakes.map(wk => `
+          <tr class="no-hover">
+            <td class="mono small">${fmtAbsolute(wk.scheduled_at)}</td>
+            <td>${escapeHTML(wk.site)}</td>
+            <td>${wk.claimed_at
+              ? `<span class="badge ok"><span class="dot"></span>sent by ${escapeHTML(wk.claimed_by || "edge")} ${fmtTime(wk.claimed_at)}</span>`
+              : `<span class="badge info pulsing"><span class="dot"></span>queued</span>`}</td>
+          </tr>`).join("")}
+      </tbody></table>` :
+      `<div class="muted small">No wake requests yet.</div>`;
+  }).catch(() => { $("#wake-history").innerHTML = `<div class="muted small">—</div>`; });
+
+  $("#edit-machine").addEventListener("click", () => {
+    openModal({
+      title: "Edit machine",
+      body: `
+        <form id="edit-machine-form">
+          <div class="row">
+            <label>Asset tag <input name="asset_tag" value="${escapeHTML(m.AssetTag || "")}"></label>
+            <label>MAC (primary) <input name="mac_primary" value="${escapeHTML(m.MACPrimary || "")}" placeholder="aa:bb:cc:dd:ee:ff"></label>
+          </div>
+          <div class="row">
+            <label>Vendor <input name="vendor" value="${escapeHTML(m.Vendor || "")}"></label>
+            <label>Model <input name="model" value="${escapeHTML(m.Model || "")}"></label>
+          </div>
+          <div class="row">
+            <label>Site <input name="site" value="${escapeHTML((m.Attributes && m.Attributes.site) || "")}" placeholder="default"></label>
+            <label>Default profile
+              <select name="default_profile_id">
+                <option value="">— none —</option>
+                ${profiles.map(p => `<option value="${p.id}" ${p.id === m.DefaultProfileID ? "selected" : ""}>${escapeHTML(p.name)}</option>`).join("")}
+              </select></label>
+          </div>
+        </form>`,
+      primary: { label: "Save" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const fd = new FormData($("#edit-machine-form", modal));
+        const attrs = Object.assign({}, m.Attributes || {});
+        if (fd.get("site")) attrs.site = fd.get("site"); else delete attrs.site;
+        await api("PATCH", `/api/v1/machines/${id}`, {
+          asset_tag: fd.get("asset_tag") || null,
+          mac_primary: fd.get("mac_primary") || null,
+          vendor: fd.get("vendor") || null,
+          model: fd.get("model") || null,
+          default_profile_id: fd.get("default_profile_id"),
+          attributes: attrs,
+        });
+        toast("Machine updated", "ok");
+        navigate();
+      },
+    });
+  });
 
   $("#delete-machine").addEventListener("click", async () => {
     const ok = await confirmModal({

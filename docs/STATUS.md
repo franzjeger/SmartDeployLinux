@@ -428,6 +428,26 @@ centrally and broadcast by the edge agent that fronts the machine's LAN.
   e2e test covering operator-queue → edge-drain → double-drain-empty →
   bad-token-404.
 
+## Phase 17 — Machine management polish
+
+**Done.**
+
+- `PATCH /api/v1/machines/{id}` (was missing entirely): partial update
+  of asset tag, MAC, vendor/model, attributes; `default_profile_id: ""`
+  clears the profile vs. omitted = unchanged
+  (`store.UpdateMachine` with `ClearDefaultProfile`).
+- `Machine.Attributes` switched `[]byte` → `json.RawMessage` so API
+  responses carry attributes as a JSON object (was base64) — unlocks
+  site + hardware inventory in the UI.
+- Machine page: Edit modal (incl. site + default profile), a Hardware
+  inventory card rendering the DMI/PCI fingerprint recorded by `/plan`,
+  and a Wake-request history card (queued vs. sent-by-agent).
+- `deployctl machines wake <id> [--at] [--site]`.
+- Tests: first deployctl tests (httptest-backed client: auth header,
+  JSON round-trip, error-body surfacing, env validation) and a store
+  integration test for partial update / attribute replacement /
+  profile clearing.
+
 ## Phase 11 — Final docs
 **Done.**
 

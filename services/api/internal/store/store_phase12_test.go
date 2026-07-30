@@ -332,6 +332,54 @@ func TestWakeRequestQueue(t *testing.T) {
 	}
 }
 
+func TestUpdateMachinePartial(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	var profile uuid.UUID
+	mustImageProfile(t, st, "img-upd", "prof-upd", &profile)
+	tag := "lab-upd"
+	m, err := st.CreateMachine(ctx, CreateMachineInput{
+		AssetTag: &tag, DefaultProfileID: &profile,
+		Attributes: []byte(`{"site":"oslo"}`),
+	})
+	must(t, err)
+
+	// Partial update: only the model changes; everything else survives.
+	model := "Latitude 7440"
+	got, err := st.UpdateMachine(ctx, m.ID, UpdateMachineInput{Model: &model})
+	must(t, err)
+	if got.Model == nil || *got.Model != model {
+		t.Fatalf("model not set: %+v", got.Model)
+	}
+	if got.AssetTag == nil || *got.AssetTag != tag {
+		t.Fatalf("asset tag lost: %+v", got.AssetTag)
+	}
+	if got.DefaultProfileID == nil || *got.DefaultProfileID != profile {
+		t.Fatalf("default profile lost: %+v", got.DefaultProfileID)
+	}
+
+	// Attributes replacement + clearing the default profile.
+	got, err = st.UpdateMachine(ctx, m.ID, UpdateMachineInput{
+		ClearDefaultProfile: true,
+		Attributes:          []byte(`{"site":"bergen"}`),
+	})
+	must(t, err)
+	if got.DefaultProfileID != nil {
+		t.Fatalf("default profile not cleared: %v", got.DefaultProfileID)
+	}
+	var attrs map[string]any
+	must(t, json.Unmarshal(got.Attributes, &attrs))
+	if attrs["site"] != "bergen" {
+		t.Fatalf("attributes not replaced: %v", attrs)
+	}
+
+	// Unknown machine → ErrNotFound.
+	if _, err := st.UpdateMachine(ctx, uuid.New(), UpdateMachineInput{Model: &model}); err != ErrNotFound {
+		t.Fatalf("unknown machine: %v", err)
+	}
+}
+
 func TestBlobAndImageVersionIngest(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

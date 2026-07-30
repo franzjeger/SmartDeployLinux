@@ -442,6 +442,70 @@ func (h *handlers) createMachine(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, m)
 }
 
+type updateMachineReq struct {
+	AssetTag         *string        `json:"asset_tag"`
+	MACPrimary       *string        `json:"mac_primary"`
+	Vendor           *string        `json:"vendor"`
+	Model            *string        `json:"model"`
+	DefaultProfileID *string        `json:"default_profile_id"` // "" clears it
+	Attributes       map[string]any `json:"attributes"`
+}
+
+// PATCH /api/v1/machines/{id} — partial update; omitted fields keep
+// their value, an empty default_profile_id clears the profile.
+func (h *handlers) updateMachine(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "machine.write") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	var req updateMachineReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+	in := store.UpdateMachineInput{
+		AssetTag: req.AssetTag, MACPrimary: req.MACPrimary,
+		Vendor: req.Vendor, Model: req.Model,
+	}
+	if req.DefaultProfileID != nil {
+		if *req.DefaultProfileID == "" {
+			in.ClearDefaultProfile = true
+		} else {
+			u, err := uuid.Parse(*req.DefaultProfileID)
+			if err != nil {
+				http.Error(w, "bad default_profile_id", http.StatusBadRequest)
+				return
+			}
+			in.DefaultProfileID = &u
+		}
+	}
+	if req.Attributes != nil {
+		b, _ := json.Marshal(req.Attributes)
+		in.Attributes = b
+	}
+	m, err := h.store.UpdateMachine(r.Context(), id, in)
+	if errors.Is(err, store.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "update failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if u := auth.UserID(r.Context()); u != uuid.Nil {
+		_ = h.store.Audit(r.Context(), store.AuditEvent{
+			ActorID: &u, ActorKind: "user", Action: "machine.updated",
+			SubjectID: &id, SubjectKind: "machine",
+		})
+	}
+	writeJSON(w, 200, m)
+}
+
 func (h *handlers) getMachine(w http.ResponseWriter, r *http.Request) {
 	if !auth.HasPerm(r.Context(), "machine.read") {
 		http.Error(w, "forbidden", http.StatusForbidden)
