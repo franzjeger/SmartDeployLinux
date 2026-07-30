@@ -40,12 +40,14 @@ func openTestStore(t *testing.T) *Store {
 	// deployment_profiles via default_profile_id, so machines goes
 	// before deployment_profiles.
 	for _, tbl := range []string{
+		"wake_requests",
 		"audit_events", "deployment_events", "deployment_jobs",
 		"one_shot_tokens", "auth_codes", "redeem_attempts",
 		"answer_file_templates",
 		"driver_match_rules", "driver_pack_versions", "driver_packs",
 		"machines",
 		"image_versions", "deployment_profiles", "images", "blobs",
+		"bootstrap_sticks", "user_roles", "users",
 	} {
 		if _, err := st.Pool().Exec(ctx, "DELETE FROM "+tbl); err != nil {
 			t.Fatalf("clean %s: %v", tbl, err)

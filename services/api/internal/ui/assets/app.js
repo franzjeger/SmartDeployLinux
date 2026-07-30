@@ -50,6 +50,202 @@ const stateBadge = state => {
   return `<span class="badge ${cfg[0]} ${live ? "pulsing" : ""}"><span class="dot"></span>${cfg[1]}</span>`;
 };
 
+// ---------- streaming SHA-256 ----------
+//
+// crypto.subtle.digest needs the whole payload in memory, which rules it
+// out for multi-GB install.wim uploads. This is a compact incremental
+// SHA-256 (FIPS 180-4) fed 8 MiB file slices at a time.
+
+class SHA256 {
+  constructor() {
+    this.h = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
+    this.buf = new Uint8Array(64);
+    this.bufLen = 0;
+    this.bytes = 0;
+  }
+  static K = new Uint32Array([
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+  _block(p, off) {
+    const w = new Uint32Array(64), h = this.h, K = SHA256.K;
+    for (let i = 0; i < 16; i++) {
+      w[i] = (p[off]<<24)|(p[off+1]<<16)|(p[off+2]<<8)|p[off+3]; off += 4;
+    }
+    for (let i = 16; i < 64; i++) {
+      const a = w[i-15], b = w[i-2];
+      const s0 = ((a>>>7)|(a<<25)) ^ ((a>>>18)|(a<<14)) ^ (a>>>3);
+      const s1 = ((b>>>17)|(b<<15)) ^ ((b>>>19)|(b<<13)) ^ (b>>>10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+    }
+    let [a,b,c,d,e,f,g,hh] = h;
+    for (let i = 0; i < 64; i++) {
+      const S1 = ((e>>>6)|(e<<26)) ^ ((e>>>11)|(e<<21)) ^ ((e>>>25)|(e<<7));
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (hh + S1 + ch + K[i] + w[i]) >>> 0;
+      const S0 = ((a>>>2)|(a<<30)) ^ ((a>>>13)|(a<<19)) ^ ((a>>>22)|(a<<10));
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) >>> 0;
+      hh = g; g = f; f = e; e = (d + t1) >>> 0;
+      d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    h[0]=(h[0]+a)>>>0; h[1]=(h[1]+b)>>>0; h[2]=(h[2]+c)>>>0; h[3]=(h[3]+d)>>>0;
+    h[4]=(h[4]+e)>>>0; h[5]=(h[5]+f)>>>0; h[6]=(h[6]+g)>>>0; h[7]=(h[7]+hh)>>>0;
+  }
+  update(chunk) {
+    this.bytes += chunk.length;
+    let off = 0;
+    if (this.bufLen) {
+      const need = Math.min(64 - this.bufLen, chunk.length);
+      this.buf.set(chunk.subarray(0, need), this.bufLen);
+      this.bufLen += need; off = need;
+      if (this.bufLen === 64) { this._block(this.buf, 0); this.bufLen = 0; }
+    }
+    while (off + 64 <= chunk.length) { this._block(chunk, off); off += 64; }
+    if (off < chunk.length) {
+      this.buf.set(chunk.subarray(off), 0);
+      this.bufLen = chunk.length - off;
+    }
+  }
+  hex() {
+    const padLen = (this.bufLen < 56 ? 56 : 120) - this.bufLen;
+    const pad = new Uint8Array(padLen + 8);
+    pad[0] = 0x80;
+    const bits = this.bytes * 8;
+    // 64-bit big-endian length (files < 2^53 bytes; high word via /2^32).
+    const hi = Math.floor(bits / 4294967296), lo = bits >>> 0;
+    pad[padLen]   = hi >>> 24; pad[padLen+1] = hi >>> 16;
+    pad[padLen+2] = hi >>> 8;  pad[padLen+3] = hi;
+    pad[padLen+4] = lo >>> 24; pad[padLen+5] = lo >>> 16;
+    pad[padLen+6] = lo >>> 8;  pad[padLen+7] = lo;
+    this.update(pad);
+    return Array.from(this.h, x => x.toString(16).padStart(8, "0")).join("");
+  }
+}
+
+async function sha256File(file, onProgress) {
+  const hasher = new SHA256();
+  const CHUNK = 8 * 1024 * 1024;
+  for (let off = 0; off < file.size; off += CHUNK) {
+    const buf = await file.slice(off, off + CHUNK).arrayBuffer();
+    hasher.update(new Uint8Array(buf));
+    if (onProgress) onProgress(Math.min(off + CHUNK, file.size) / file.size);
+  }
+  return hasher.hex();
+}
+
+// ---------- auth (OIDC authorization-code + PKCE) ----------
+//
+// Pre-auth, the SPA asks /api/v1/auth/config for the issuer + client_id.
+// In dev mode (no OIDC configured server-side) everything is open and
+// none of this runs. Otherwise: standard code+PKCE against the issuer,
+// ID token kept in sessionStorage, sent as the bearer on every call.
+
+const TOKEN_KEY = "deploy_id_token";
+let authCfg = null; // {issuer, client_id, dev_mode}
+
+const idToken = () => sessionStorage.getItem(TOKEN_KEY) || "";
+
+async function loadAuthConfig() {
+  if (authCfg) return authCfg;
+  const r = await fetch("/api/v1/auth/config");
+  authCfg = r.ok ? await r.json() : { dev_mode: true };
+  return authCfg;
+}
+
+async function oidcMeta() {
+  const cfg = await loadAuthConfig();
+  const r = await fetch(cfg.issuer.replace(/\/$/, "") + "/.well-known/openid-configuration");
+  if (!r.ok) throw new Error("OIDC discovery failed: HTTP " + r.status);
+  return r.json();
+}
+
+const b64url = bytes =>
+  btoa(String.fromCharCode(...new Uint8Array(bytes)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+function randomString(len = 64) {
+  const bytes = new Uint8Array(len);
+  crypto.getRandomValues(bytes);
+  return b64url(bytes).slice(0, len);
+}
+
+async function startLogin() {
+  const cfg = await loadAuthConfig();
+  if (cfg.dev_mode) return;
+  const meta = await oidcMeta();
+  const verifier = randomString(64);
+  const state = randomString(32);
+  sessionStorage.setItem("pkce_verifier", verifier);
+  sessionStorage.setItem("oauth_state", state);
+  const challenge = b64url(await crypto.subtle.digest("SHA-256",
+    new TextEncoder().encode(verifier)));
+  const q = new URLSearchParams({
+    response_type: "code",
+    client_id: cfg.client_id,
+    redirect_uri: location.origin + "/",
+    scope: "openid email profile",
+    state,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  });
+  location.assign(meta.authorization_endpoint + "?" + q);
+}
+
+// completeLogin handles the redirect back from the IdP (?code=...).
+// Returns true when it consumed a code (the URL is cleaned either way).
+async function completeLogin() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get("code");
+  if (!code) return false;
+  const cleanURL = location.origin + location.pathname + location.hash;
+  try {
+    if (params.get("state") !== sessionStorage.getItem("oauth_state")) {
+      throw new Error("state mismatch");
+    }
+    const cfg = await loadAuthConfig();
+    const meta = await oidcMeta();
+    const r = await fetch(meta.token_endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        client_id: cfg.client_id,
+        redirect_uri: location.origin + "/",
+        code_verifier: sessionStorage.getItem("pkce_verifier") || "",
+      }),
+    });
+    const tok = await r.json();
+    if (!r.ok || !tok.id_token) {
+      throw new Error(tok.error_description || tok.error || "token exchange failed");
+    }
+    sessionStorage.setItem(TOKEN_KEY, tok.id_token);
+    // Mirror into a cookie for EventSource (which can't set headers).
+    // Read only by the SSE route's cookie fallback on the server.
+    document.cookie = "deploy_session=" + tok.id_token +
+      "; path=/; SameSite=Strict" + (location.protocol === "https:" ? "; Secure" : "");
+  } catch (e) {
+    toast("Login failed: " + e.message, "err");
+  } finally {
+    sessionStorage.removeItem("pkce_verifier");
+    sessionStorage.removeItem("oauth_state");
+    history.replaceState(null, "", cleanURL);
+  }
+  return true;
+}
+
+function logout() {
+  sessionStorage.removeItem(TOKEN_KEY);
+  document.cookie = "deploy_session=; path=/; Max-Age=0";
+  location.reload();
+}
+
 // ---------- API client ----------
 
 async function api(method, path, body) {
@@ -58,7 +254,15 @@ async function api(method, path, body) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
+  const tok = idToken();
+  if (tok) opts.headers["Authorization"] = "Bearer " + tok;
   const r = await fetch(path, opts);
+  if (r.status === 401 && authCfg && !authCfg.dev_mode) {
+    // Expired or missing session: clear and restart the login flow.
+    sessionStorage.removeItem(TOKEN_KEY);
+    await startLogin();
+    throw new Error("session expired; redirecting to login");
+  }
   let data = null;
   if (r.status !== 204) {
     const text = await r.text();
@@ -397,6 +601,9 @@ route("/machines/:id", async ({ id }) => {
         </div>
         <div class="page-actions">
           <a class="btn" href="#/deploy?machine=${id}">Deploy</a>
+          <button class="btn secondary" id="wake-machine">Wake</button>
+          <button class="btn secondary" id="capture-machine">Capture golden image</button>
+          <button class="btn secondary" id="edit-machine">Edit</button>
           <button class="btn danger" id="delete-machine">Delete</button>
         </div>
       </div>
@@ -409,13 +616,90 @@ route("/machines/:id", async ({ id }) => {
           <dt>Vendor</dt>         <dd>${escapeHTML(m.Vendor || "—")}</dd>
           <dt>Model</dt>          <dd>${escapeHTML(m.Model || "—")}</dd>
           <dt>Default profile</dt><dd>${escapeHTML(profById[m.DefaultProfileID] || "—")}</dd>
+          <dt>Site</dt>           <dd>${escapeHTML((m.Attributes && m.Attributes.site) || "default")}</dd>
           <dt>Registered</dt>     <dd class="mono">${fmtAbsolute(m.CreatedAt)}</dd>
         </dl>
       </div>
 
+      ${(() => {
+        const hw = m.Attributes && m.Attributes.hardware;
+        if (!hw) return "";
+        const pci = Array.isArray(hw.pci) ? hw.pci : [];
+        return `
+          <div class="section-title">Hardware inventory <span class="muted small" style="font-weight:normal;text-transform:none;letter-spacing:0;">reported by the last deployment</span></div>
+          <div class="card"><dl class="detail-grid">
+            <dt>DMI vendor</dt>    <dd>${escapeHTML(hw.dmi_vendor || "—")}</dd>
+            <dt>DMI product</dt>   <dd>${escapeHTML(hw.dmi_product || "—")}</dd>
+            <dt>Baseboard</dt>     <dd class="mono">${escapeHTML(hw.dmi_baseboard || "—")}</dd>
+            <dt>PCI devices</dt>   <dd class="mono small">${pci.length
+              ? pci.map(p => escapeHTML(`${p.vid}:${p.did}`)).join(", ")
+              : "—"}</dd>
+          </dl></div>`;
+      })()}
+
       <div class="section-title">Deployment history</div>
       ${jobs.length ? jobsTable(jobs) : `<div class="card"><div class="empty muted">No deployments yet for this machine.</div></div>`}
+
+      <div class="section-title">Wake requests</div>
+      <div id="wake-history" class="card"><div class="muted small">Loading…</div></div>
     </div>`;
+
+  api("GET", `/api/v1/machines/${id}/wake`).then(wakes => {
+    $("#wake-history").innerHTML = wakes.length ? `
+      <table><thead><tr><th>Scheduled</th><th>Site</th><th>Status</th></tr></thead><tbody>
+        ${wakes.map(wk => `
+          <tr class="no-hover">
+            <td class="mono small">${fmtAbsolute(wk.scheduled_at)}</td>
+            <td>${escapeHTML(wk.site)}</td>
+            <td>${wk.claimed_at
+              ? `<span class="badge ok"><span class="dot"></span>sent by ${escapeHTML(wk.claimed_by || "edge")} ${fmtTime(wk.claimed_at)}</span>`
+              : `<span class="badge info pulsing"><span class="dot"></span>queued</span>`}</td>
+          </tr>`).join("")}
+      </tbody></table>` :
+      `<div class="muted small">No wake requests yet.</div>`;
+  }).catch(() => { $("#wake-history").innerHTML = `<div class="muted small">—</div>`; });
+
+  $("#edit-machine").addEventListener("click", () => {
+    openModal({
+      title: "Edit machine",
+      body: `
+        <form id="edit-machine-form">
+          <div class="row">
+            <label>Asset tag <input name="asset_tag" value="${escapeHTML(m.AssetTag || "")}"></label>
+            <label>MAC (primary) <input name="mac_primary" value="${escapeHTML(m.MACPrimary || "")}" placeholder="aa:bb:cc:dd:ee:ff"></label>
+          </div>
+          <div class="row">
+            <label>Vendor <input name="vendor" value="${escapeHTML(m.Vendor || "")}"></label>
+            <label>Model <input name="model" value="${escapeHTML(m.Model || "")}"></label>
+          </div>
+          <div class="row">
+            <label>Site <input name="site" value="${escapeHTML((m.Attributes && m.Attributes.site) || "")}" placeholder="default"></label>
+            <label>Default profile
+              <select name="default_profile_id">
+                <option value="">— none —</option>
+                ${profiles.map(p => `<option value="${p.id}" ${p.id === m.DefaultProfileID ? "selected" : ""}>${escapeHTML(p.name)}</option>`).join("")}
+              </select></label>
+          </div>
+        </form>`,
+      primary: { label: "Save" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const fd = new FormData($("#edit-machine-form", modal));
+        const attrs = Object.assign({}, m.Attributes || {});
+        if (fd.get("site")) attrs.site = fd.get("site"); else delete attrs.site;
+        await api("PATCH", `/api/v1/machines/${id}`, {
+          asset_tag: fd.get("asset_tag") || null,
+          mac_primary: fd.get("mac_primary") || null,
+          vendor: fd.get("vendor") || null,
+          model: fd.get("model") || null,
+          default_profile_id: fd.get("default_profile_id"),
+          attributes: attrs,
+        });
+        toast("Machine updated", "ok");
+        navigate();
+      },
+    });
+  });
 
   $("#delete-machine").addEventListener("click", async () => {
     const ok = await confirmModal({
@@ -429,6 +713,91 @@ route("/machines/:id", async ({ id }) => {
       toast("Machine deleted", "ok");
       location.hash = "#/machines";
     } catch (e) { toast(e.message, "err"); }
+  });
+
+  $("#wake-machine").addEventListener("click", () => {
+    if (!m.MACPrimary) {
+      toast("Machine has no primary MAC — wake-on-LAN needs one.", "err");
+      return;
+    }
+    openModal({
+      title: "Wake machine",
+      body: `
+        <p class="small muted">Queues a wake-on-LAN request. The edge agent at the machine's site
+        drains the queue and broadcasts the magic packet on its LAN. The machine's site comes from
+        its <code>site</code> attribute (or "default").</p>
+        <form id="wake-form">
+          <div class="row"><label class="full">Wake at (optional — leave empty for "next agent poll")
+            <input type="datetime-local" name="at"></label></div>
+          <div class="row"><label class="full">Site override (optional)
+            <input name="site" placeholder="e.g. oslo-branch" autocomplete="off"></label></div>
+        </form>`,
+      primary: { label: "Queue wake" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const fd = new FormData($("#wake-form", modal));
+        const body = {};
+        if (fd.get("at")) body.at = new Date(fd.get("at")).toISOString();
+        if (fd.get("site")) body.site = fd.get("site");
+        const resp = await api("POST", `/api/v1/machines/${id}/wake`, body);
+        toast(`Wake queued for site "${resp.site}"`, "ok");
+      },
+    });
+  });
+
+  $("#capture-machine").addEventListener("click", async () => {
+    const images = await api("GET", "/api/v1/images").catch(() => []);
+    if (!images.length) {
+      toast("Create an image first (Images page) — capture writes a new version of it.", "err");
+      return;
+    }
+    if (!profiles.length) {
+      toast("Create a profile first — capture boots WinPE via the machine's profile.", "err");
+      return;
+    }
+    openModal({
+      title: "Capture golden image",
+      body: `
+        <p class="small muted">Generalize the machine first (Windows:
+        <code>sysprep /generalize /oobe /shutdown</code>; Linux: clear machine-id and host keys — the
+        capture script prunes them too), then boot it with a bootstrap stick and this code. The capture
+        environment archives the OS volume and uploads it as a new version of the chosen image.
+        A second local volume or USB disk is needed as scratch space.</p>
+        <form id="capture-form">
+          <div class="row"><label class="full">Target image
+            <select name="image_id">
+              ${images.map(i => `<option value="${i.id}">${escapeHTML(i.name)} (${escapeHTML(i.os_family)} ${escapeHTML(i.os_version)})</option>`).join("")}
+            </select></label></div>
+          <div class="row"><label class="full">Boot profile (provides the WinPE boot media)
+            <select name="profile_id">
+              ${profiles.map(p => `<option value="${p.id}" ${p.id === m.DefaultProfileID ? "selected" : ""}>${escapeHTML(p.name)}</option>`).join("")}
+            </select></label></div>
+          <div class="row"><label class="full">Version tag (optional)
+            <input name="version_tag" placeholder="e.g. 24H2-golden-v3" autocomplete="off"></label></div>
+        </form>`,
+      primary: { label: "Issue capture code" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const fd = new FormData($("#capture-form", modal));
+        const resp = await api("POST", "/api/v1/deployments/issue", {
+          machine_id: id,
+          profile_id: fd.get("profile_id"),
+          kind: "capture",
+          capture_image_id: fd.get("image_id"),
+          capture_version_tag: fd.get("version_tag") || "",
+          issued_for: "capture " + (m.AssetTag || trunc(m.ID)),
+        });
+        openModal({
+          title: "Capture code issued",
+          body: `
+            <p>Boot the sysprepped machine from a bootstrap stick and enter:</p>
+            <div class="code-display" style="font-size:2em;text-align:center;letter-spacing:0.15em;"><code>${escapeHTML(resp.code)}</code></div>
+            <p class="small muted">Expires ${fmtAbsolute(resp.expires_at)}. Track progress on the Jobs page.</p>`,
+          primary: { label: "Done" },
+        });
+        return false; // keep the code modal open (we replaced it)
+      },
+    });
   });
 });
 
@@ -643,6 +1012,8 @@ route("/jobs/:id", async ({ id }) => {
           <p class="subtitle mono small">${escapeHTML(j.id)}</p>
         </div>
         <div class="page-actions">
+          ${["pending","bootstrapped","imaging"].includes(j.state)
+            ? `<button class="btn danger" id="cancel-job-btn">Cancel deployment</button>` : ""}
           <a class="btn secondary" href="#/machines/${j.machine_id}">View machine</a>
         </div>
       </div>
@@ -680,6 +1051,23 @@ route("/jobs/:id", async ({ id }) => {
 
   // Clean DOM if there were no events (we showed an "empty" message).
   if (events.length === 0) tlEl.innerHTML = "";
+
+  const cancelBtn = $("#cancel-job-btn");
+  if (cancelBtn) cancelBtn.addEventListener("click", async () => {
+    const ok = await confirmModal({
+      title: "Cancel deployment?",
+      message: "The job moves to cancelled and its boot tokens are revoked. A machine already imaging will fail its next server call.",
+      danger: true, primaryLabel: "Cancel deployment",
+    });
+    if (!ok) return;
+    try {
+      await api("POST", `/api/v1/jobs/${id}/cancel`);
+      toast("Deployment cancelled");
+      navigate();
+    } catch (e) {
+      toast("Cancel failed: " + e.message, "error");
+    }
+  });
 
   let es;
   if (typeof EventSource === "function") {
@@ -1327,9 +1715,66 @@ route("/images/:id", async ({ id }) => {
         </form>
       </div>
 
+      <div class="section-title">Versions</div>
+      <div class="card">
+        <div id="versions-list"><div class="muted small">Loading…</div></div>
+        <div class="btn-row" style="margin-top:12px;">
+          <label class="btn small secondary" style="cursor:pointer;">
+            Upload new version
+            <input type="file" id="version-file" style="display:none;">
+          </label>
+          <span id="upload-status" class="muted small"></span>
+        </div>
+      </div>
+
       <div class="section-title">Used by profiles</div>
       <div id="profiles-using" class="card"><div class="muted small">Loading…</div></div>
     </div>`;
+
+  const renderVersions = async () => {
+    const versions = await api("GET", `/api/v1/images/${id}/versions`).catch(() => []);
+    $("#versions-list").innerHTML = versions.length ? `
+      <table><thead><tr><th>Tag</th><th>SHA-256</th><th>Size</th><th>Added</th></tr></thead><tbody>
+        ${versions.map(v => `
+          <tr class="no-hover">
+            <td><code>${escapeHTML(v.version_tag)}</code></td>
+            <td class="mono small">${escapeHTML(trunc(v.blob_sha256, 16))}</td>
+            <td class="mono small">${(v.size_bytes / 1048576).toFixed(1)} MiB</td>
+            <td class="muted small">${fmtTime(v.created_at)}</td>
+          </tr>`).join("")}
+      </tbody></table>` :
+      `<div class="muted small">No versions uploaded. The deploy pipeline falls back to the media URLs above.</div>`;
+  };
+  renderVersions();
+
+  $("#version-file").addEventListener("change", async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const status = $("#upload-status");
+    try {
+      status.textContent = "Hashing…";
+      const sha = await sha256File(file, p => {
+        status.textContent = `Hashing… ${Math.round(p * 100)}%`;
+      });
+      status.textContent = "Registering blob…";
+      const blob = await api("POST", "/api/v1/blobs", {
+        sha256: sha, size_bytes: file.size, filename: file.name, role: "images",
+      });
+      status.textContent = "Uploading…";
+      const put = await fetch(blob.upload_url, { method: "PUT", body: file });
+      if (!put.ok) throw new Error("upload failed: HTTP " + put.status);
+      status.textContent = "Linking version…";
+      await api("POST", `/api/v1/images/${id}/versions`, { blob_id: blob.blob_id });
+      status.textContent = "";
+      toast("Version uploaded", "ok");
+      renderVersions();
+    } catch (err) {
+      status.textContent = "";
+      toast("Upload failed: " + err.message, "err");
+    } finally {
+      e.target.value = "";
+    }
+  });
 
   const profiles = await api("GET", "/api/v1/profiles").catch(() => []);
   const using = profiles.filter(p => p.image_id === id);
@@ -1393,6 +1838,128 @@ route("/images/:id", async ({ id }) => {
   });
 });
 
+// ---------- views: Driver packs ----------
+
+route("/drivers", async () => {
+  setBreadcrumb([{label:"Driver packs"}]);
+  const packs = await api("GET", "/api/v1/driver-packs").catch(() => []);
+
+  $("#content").innerHTML = `
+    <div class="page">
+      <div class="page-title">
+        <div><h1>Driver packs</h1>
+        <p class="subtitle">Hardware-matched driver bundles injected during Windows deployment (DISM /Add-Driver).</p></div>
+        <div class="page-actions"><button class="btn" id="add-pack">+ Add driver pack</button></div>
+      </div>
+      ${packs.length ? `
+        <div class="table-wrap"><table>
+          <thead><tr>
+            <th>Vendor / Model</th><th>OS</th><th>Tag</th><th>Size</th><th>Match rules</th><th>Added</th><th></th>
+          </tr></thead>
+          <tbody>
+          ${packs.map(p => `
+            <tr class="no-hover">
+              <td><strong>${escapeHTML(p.vendor)}</strong> ${escapeHTML(p.model)}</td>
+              <td>${escapeHTML(p.os_family)} ${escapeHTML(p.os_version)}</td>
+              <td><code>${escapeHTML(p.version_tag)}</code></td>
+              <td class="mono small">${(p.size_bytes / 1048576).toFixed(1)} MiB</td>
+              <td class="small">${p.rules.map(r => `<code>${escapeHTML(r.type)}=${escapeHTML(r.value)}</code>`).join("<br>") || "—"}</td>
+              <td class="muted small">${fmtTime(p.created_at)}</td>
+              <td><button class="btn small danger" data-del="${p.version_id}">Delete</button></td>
+            </tr>`).join("")}
+          </tbody>
+        </table></div>` : `
+        <div class="card"><div class="empty">
+          <div class="empty-icon">⚙</div>
+          <div>No driver packs yet.</div>
+          <p class="small muted">Windows in-box drivers cover generic hardware; add vendor packs for anything exotic (NICs, storage, docks).</p>
+        </div></div>`}
+    </div>`;
+
+  $$("#content [data-del]").forEach(btn => btn.addEventListener("click", async () => {
+    const ok = await confirmModal({
+      title: "Delete driver pack version",
+      message: "Machines matching this pack will fall back to in-box drivers.",
+      danger: true, primaryLabel: "Delete",
+    });
+    if (!ok) return;
+    try {
+      await api("DELETE", `/api/v1/driver-packs/versions/${btn.dataset.del}`);
+      toast("Driver pack deleted", "ok");
+      navigate();
+    } catch (e) { toast(e.message, "err"); }
+  }));
+
+  $("#add-pack").addEventListener("click", () => {
+    openModal({
+      title: "Add driver pack",
+      body: `
+        <p class="small muted">A .zip of extracted (.inf-style) drivers. Match rules select this pack
+        for target hardware — one per line, <code>type=value</code>. Types:
+        <code>pci-vid-did</code> (e.g. 8086:1521), <code>dmi-product</code>, <code>dmi-baseboard</code>,
+        <code>dmi-vendor</code>, <code>os-version</code>.</p>
+        <form id="pack-form">
+          <div class="row">
+            <label>Vendor <input name="vendor" placeholder="Dell Inc." required></label>
+            <label>Model <input name="model" placeholder="Latitude 7440" required></label>
+          </div>
+          <div class="row">
+            <label>OS family
+              <select name="os_family"><option value="windows">windows</option><option value="linux">linux</option></select>
+            </label>
+            <label>OS version <input name="os_version" placeholder="11" required></label>
+            <label>Version tag <input name="version_tag" placeholder="v1"></label>
+          </div>
+          <div class="row"><label class="full">Match rules
+            <textarea name="rules" rows="4" placeholder="dmi-product=Latitude 7440&#10;pci-vid-did=8086:1521"></textarea>
+          </label></div>
+          <div class="row"><label class="full">Driver bundle (.zip)
+            <input type="file" name="file" accept=".zip" required>
+          </label></div>
+          <div class="row"><span id="pack-upload-status" class="muted small"></span></div>
+        </form>`,
+      primary: { label: "Upload + create" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const form = $("#pack-form", modal);
+        const fd = new FormData(form);
+        const file = form.querySelector('[name="file"]').files[0];
+        if (!file) throw new Error("choose a .zip file");
+        const rules = (fd.get("rules") || "").split("\n")
+          .map(l => l.trim()).filter(Boolean)
+          .map(l => {
+            const i = l.indexOf("=");
+            if (i < 1) throw new Error(`bad rule line: ${l}`);
+            return { type: l.slice(0, i).trim(), value: l.slice(i + 1).trim() };
+          });
+        if (!rules.length) throw new Error("at least one match rule required");
+
+        const status = $("#pack-upload-status", modal);
+        status.textContent = "Hashing…";
+        const sha = await sha256File(file, p => {
+          status.textContent = `Hashing… ${Math.round(p * 100)}%`;
+        });
+        status.textContent = "Registering blob…";
+        const blob = await api("POST", "/api/v1/blobs", {
+          sha256: sha, size_bytes: file.size, filename: file.name, role: "drivers",
+        });
+        status.textContent = "Uploading…";
+        const put = await fetch(blob.upload_url, { method: "PUT", body: file });
+        if (!put.ok) throw new Error("upload failed: HTTP " + put.status);
+        status.textContent = "Creating pack…";
+        await api("POST", "/api/v1/driver-packs", {
+          vendor: fd.get("vendor"), model: fd.get("model"),
+          os_family: fd.get("os_family"), os_version: fd.get("os_version"),
+          version_tag: fd.get("version_tag") || "v1",
+          blob_id: blob.blob_id, rules,
+        });
+        toast("Driver pack created", "ok");
+        navigate();
+      },
+    });
+  });
+});
+
 // ---------- views: Sticks ----------
 
 route("/sticks", async () => {
@@ -1400,8 +1967,11 @@ route("/sticks", async () => {
   const ss = await api("GET", "/api/v1/bootstrap-sticks");
   $("#content").innerHTML = `
     <div class="page">
-      <div class="page-title"><h1>Bootstrap sticks</h1>
+      <div class="page-title">
+        <div><h1>Bootstrap sticks</h1>
         <p class="subtitle">Inventory of physical USB sticks. Register after building with <code>make-stick.sh</code>.</p></div>
+        <div class="page-actions"><button class="btn" id="gen-stick-config">Generate stick config</button></div>
+      </div>
       ${ss.length ? `
         <div class="table-wrap"><table>
           <thead><tr>
@@ -1425,6 +1995,56 @@ route("/sticks", async () => {
           <p class="small muted">Build with <code>make -C bootstrap</code>, customize with <code>bootstrap/make-stick.sh</code>, then register via the deployctl CLI.</p>
         </div></div>`}
     </div>`;
+
+  $("#gen-stick-config").addEventListener("click", async () => {
+    let tailnet = "";
+    const ask = () => new Promise(resolve => {
+      let confirmed = false;
+      openModal({
+        title: "Generate stick config",
+        body: `
+          <p class="small muted">Produces the exact <code>make-stick.sh</code> invocation and the CA
+          certificate for this deployment. Build happens on your workstation (needs root for losetup).</p>
+          <form id="stick-config-form">
+            <div class="row"><label class="full">Tailnet name
+              <input name="tailnet" placeholder="acmecorp.headscale.example.com" autocomplete="off">
+            </label></div>
+          </form>`,
+        primary: { label: "Generate" },
+        secondary: "Cancel",
+        onPrimary: modal => {
+          tailnet = new FormData($("#stick-config-form", modal)).get("tailnet") || "";
+          confirmed = true;
+        },
+        onClose: () => resolve(confirmed),
+      });
+    });
+    if (!(await ask())) return;
+    try {
+      const cfg = await api("GET", "/api/v1/bootstrap-sticks/config" +
+        (tailnet ? "?tailnet=" + encodeURIComponent(tailnet) : ""));
+      openModal({
+        title: "Stick build config",
+        body: `
+          <p class="small muted">Run this from a checkout of the deployserver repo after
+          <code>make -C bootstrap</code>:</p>
+          <pre class="mono small" style="white-space:pre-wrap;overflow-x:auto;">${escapeHTML(cfg.make_stick_command)}</pre>
+          ${cfg.ca_pem ? `
+            <p class="small muted">Save this as <code>deploy-ca.pem</code> next to the command:</p>
+            <pre class="mono small" style="max-height:180px;overflow:auto;">${escapeHTML(cfg.ca_pem)}</pre>`
+          : `<p class="small muted">⚠ No CA certificate found on the server
+             (DEPLOY_CA_CERT_PATH). Point --ca-cert at the CA that signs
+             ${escapeHTML(cfg.deploy_url)}.</p>`}
+        `,
+        primary: { label: "Copy command" },
+        secondary: "Close",
+        onPrimary: async () => {
+          await navigator.clipboard.writeText(cfg.make_stick_command);
+          toast("Command copied", "ok");
+        },
+      });
+    } catch (e) { toast(e.message, "err"); }
+  });
 });
 
 // ---------- views: Audit ----------
@@ -1486,12 +2106,24 @@ route("/audit", async () => {
 // ---------- boot ----------
 
 async function boot() {
+  await loadAuthConfig();
+  await completeLogin();
+  if (!authCfg.dev_mode && !idToken()) {
+    await startLogin();
+    return; // navigating away to the IdP
+  }
   try {
     const me = await api("GET", "/api/v1/me");
     if (me.dev_mode) $("#dev-banner").classList.remove("hidden");
-    $("#user-info").textContent = me.user_id && me.user_id !== "00000000-0000-0000-0000-000000000000"
+    const info = $("#user-info");
+    info.textContent = me.user_id && me.user_id !== "00000000-0000-0000-0000-000000000000"
       ? `user ${trunc(me.user_id, 8)}`
       : "anonymous (dev mode)";
+    if (!authCfg.dev_mode) {
+      info.insertAdjacentHTML("afterend",
+        ` <a href="#" id="logout-link" class="small">log out</a>`);
+      $("#logout-link").addEventListener("click", e => { e.preventDefault(); logout(); });
+    }
   } catch {}
   navigate();
 }

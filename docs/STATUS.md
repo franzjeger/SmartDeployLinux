@@ -198,6 +198,256 @@ top of doc for what would be required).
 (codes — 9 tests, driverpack — 9 tests, answerfile — 5 tests). End-to-end
 nested-KVM harness scaffolded in `tests/e2e/` but not authored.
 
+## Phase 12 — End-to-end correctness + hardening pass
+
+**Done.** A full-code audit found and fixed defects that made the deploy
+spine non-functional end-to-end, plus wired in the dormant Phase-5
+libraries. All verified by unit + Postgres-backed integration tests.
+
+### Correctness fixes (deploy spine)
+
+| Defect | Fix |
+|---|---|
+| Phone-home hashed tokens with plain sha256 while broker mints peppered hashes → every event 401'd | `appendDeploymentEvent` now uses `tokens.HashBootToken` |
+| Phone-home *consumed* the one-shot token on first event, breaking all later events | new non-consuming `store.VerifyPhoneHomeToken`, job-bound and terminal-state-gated |
+| First "imaging" report hit an invalid pending→imaging transition | new `store.AdvanceJob` walks intermediate happy-path states; iPXE fetch also advances pending→bootstrapped |
+| `OneShotToken` never populated in render responses → WinPE booted with empty bearer | `renderByToken` echoes the authenticated token |
+| Linux nocloud URL used the machine UUID (renders 410 at the token route) | templates now use `/boot/<token>/` |
+| iPXE templates used `html/template` (& → `&amp;`) and `\` line continuations (not iPXE syntax) | `text/template`, single-line commands; golden tests assert bootability |
+| Served `deploy.cmd` was a stub that `exit /b 1` | real script embedded via `go:embed`, sync-checked against `winpe/scripts/deploy.cmd` by test |
+| `image.wim` hardcoded to `/static/win11/install.wim` | resolved from the profile image's media / static convention |
+| Driver matcher + unattend renderer were dead code | wired: `store.MatchDriverPacks` (DB rules → `driverpack.Select`), `/plan` + `/drivers.zip` return matched packs, `/unattend.xml` renders through `answerfile.Render` |
+| `/plan` discarded the reported DMI/PCI fingerprint | persisted via `store.RecordMachineInventory` into `machines.attributes.hardware` (+ vendor/model backfill) |
+| Seeded admin could never link on first OIDC login (unique-email collision → 500) | resolver does a two-step upsert that adopts the seeded row |
+| Broker minted tokens after a failed job insert (orphaned deployments) | redeem now fails loudly if `CreateDeploymentJob` errors |
+| API `readSourceIP` split IPv6 on the first `:` | uses `net.SplitHostPort` |
+| compose/Caddyfile referenced a nonexistent `ui` service, wrong `http-boot-internal` hostname, mismatched `httpboot.pem` names, no caddy secrets mount | fixed; stack now describes only services that exist |
+
+### Security hardening
+
+- `?token=` query-string fallback removed for good (SECURITY.md §4 #2).
+- Broker `/issue-code` now requires `X-Internal-Auth` shared secret
+  (`AUTH_BROKER_ISSUE_SHARED_SECRET`, constant-time compare, 404 on
+  mismatch); the api injects it when proxying issuance.
+- RBAC checks added to previously-open read endpoints (profiles, images,
+  jobs, catalog); migration `0004` seeds `job.read` for operator/viewer.
+- Caddy → http-boot proxy now verifies the internal CA instead of
+  `tls_insecure_skip_verify`.
+
+### New capability
+
+- `POST /api/v1/jobs/{id}/cancel` + UI cancel button (revokes boot tokens).
+- `/readyz` (DB-gated readiness) and `/metrics` (Prometheus text format,
+  dependency-free `internal/metrics`) on the api.
+- Worker reaps consumed/expired `one_shot_tokens` (>24h).
+- Built-in autoinstall user-data now supports per-profile overrides
+  (`autoinstall`/`cloud-init` templates) and profile vars
+  (`username`, `password_hash`, `ssh_authorized_key`); ships a locked
+  password by default instead of the old `REPLACEME` literal.
+
+### New tests
+
+- `cmd/api`: bearer/query-string, IPv6 source IP, phase mapping,
+  user-data token injection, deploy.cmd sync (5 tests).
+- `http-boot/render`: iPXE bootability + token-datasource goldens (3).
+- `auth-broker/broker`: issue-code secret middleware (2).
+- `api/internal/metrics`: exposition + middleware (2).
+- Store integration (Postgres): phone-home token repeatability,
+  AdvanceJob, driver-pack matching via DB rules, inventory merge (4);
+  test harness now cleans `users`/`bootstrap_sticks` so the suite is
+  rerunnable against a persistent database.
+
+## Phase 13 — Image ingest, stick-config generator, UI login
+
+**Done.** The three "NOT STARTED" items from Phase 8's backlog.
+
+### Image ingest (SmartDeploy "import image")
+
+- `internal/s3sign`: dependency-free AWS SigV4 presigner (validated
+  against the AWS-documented signature vector; works with MinIO path
+  style and S3 virtual-host style).
+- `POST /api/v1/blobs` registers a blob (idempotent on sha256) and
+  returns a presigned PUT URL — image bytes go straight to the object
+  store, never through the API.
+- `POST/GET /api/v1/images/{id}/versions` links uploaded blobs as image
+  versions; the render pipeline already picks the newest version.
+- UI: image detail gains a Versions panel with chunked in-browser
+  SHA-256 (incremental FIPS 180-4, verified against node's crypto —
+  multi-GB WIMs hash without loading into memory), progress, direct
+  presigned upload, and version linking.
+- New env: `S3_PUBLIC_ENDPOINT` (host the operator's browser can reach),
+  `S3_REGION`.
+
+### Stick-config generator
+
+- `GET /api/v1/bootstrap-sticks/config?tailnet=...` returns the rendered
+  stick `config.json`, the pinned CA PEM (when `DEPLOY_CA_CERT_PATH`
+  exists), and a copy-pasteable `make-stick.sh` command. Image assembly
+  stays on the operator workstation (losetup needs root) but no
+  parameter is hand-typed anymore.
+- UI: "Generate stick config" on the Sticks page (modal + copy button).
+- New env: `DEPLOY_TAILNET`, `DEPLOY_CA_CERT_PATH`.
+
+### UI OIDC login (closes "UI works only in dev mode")
+
+- `GET /api/v1/auth/config` (pre-auth) exposes issuer + client_id.
+- SPA implements the authorization-code + PKCE flow in vanilla JS
+  (S256 challenge, state check, sessionStorage ID token), attaches
+  `Authorization: Bearer` to every API call, auto-restarts login on 401,
+  and shows a log-out link.
+- SSE: `EventSource` can't set headers, so the SPA mirrors the token
+  into a `SameSite=Strict` cookie and the server promotes it to a
+  bearer **only on the read-only SSE route** (`cookieBearerFallback`) —
+  the rest of the API stays header-only (no CSRF surface).
+
+### Tests
+
+- s3sign: AWS known-answer vector, key escaping, determinism (3).
+- auth-config + stick-config handlers, bucket role mapping (3).
+- Store integration: blob idempotency, version linking + dup-tag
+  rejection, version listing (1 test, 3 assertions ↑).
+- JS SHA-256 validated against node crypto across block-boundary sizes
+  and chunked input (build-time check, not committed as a test runner).
+
+## Phase 14 — Golden-image capture, driver-pack ingest, deployctl upload
+
+**Done.** The SmartDeploy-core capture workflow plus the remaining
+ingest surfaces.
+
+### Golden-image capture (WinPE)
+
+- Migration `0005`: `kind` (`deploy`/`capture`) + capture target columns
+  on `auth_codes` and `deployment_jobs`. Intent is set at code issuance
+  and copied onto the job at redeem (broker `INSERT…SELECT`), so the
+  stick/redeem/boot path is unchanged.
+- `winpe/scripts/capture.cmd` (embedded + sync-tested like deploy.cmd):
+  finds the offline sysprepped Windows volume, captures it with
+  `DISM /Capture-Image /Compress:max`, hashes with certutil, registers
+  the blob via `POST /v1/jobs/{id}/capture-upload` (presigned PUT, 6h),
+  uploads with curl, finalizes via `POST /v1/jobs/{id}/capture-complete`
+  — which links the blob as a new version of the target image and
+  completes the job. Same bearer-token gating as deploy; a deploy token
+  cannot reach the capture endpoints (kind check).
+- `GET /v1/jobs/{id}/deploy.cmd` now serves capture.cmd for capture
+  jobs — one boot.wim, server decides the script.
+- Issue path: `POST /api/v1/deployments/issue` accepts
+  `kind=capture` + `capture_image_id` + `capture_version_tag`
+  (requires `image.write` on top of `deployment.create`).
+- UI: "Capture golden image" on the machine page — pick target image,
+  boot profile, version tag → 6-char capture code, tracked like any job.
+
+### Driver-pack ingest
+
+- `store.CreateDriverPackVersion` (atomic pack-upsert + version +
+  rules), `ListDriverPacks`, `DeleteDriverPackVersion`.
+- `GET/POST /api/v1/driver-packs`, `DELETE
+  /api/v1/driver-packs/versions/{id}`; rule types validated; requires
+  ≥1 match rule.
+- UI: new **Driver packs** page — list with rules, delete, and an
+  add-pack modal that hashes + uploads the .zip via the blob flow and
+  binds match rules. Packs are matched by `/plan` immediately.
+
+### deployctl
+
+- `deployctl images list` and `deployctl images upload --image <id>
+  --file install.wim [--tag v]`: streaming SHA-256, presigned PUT with
+  no client timeout, version linking. The headless twin of the UI panel.
+
+### Tests
+
+- capture.cmd embed sync + content assertions, lowerHex (2).
+- Store integration: capture kind/target roundtrip, driver-pack CRUD +
+  matcher pickup + pack-identity dedup (2).
+- Broker capture-copy `INSERT…SELECT` validated against the live
+  Postgres 16 schema.
+
+## Phase 15 — Linux capture + end-to-end smoke harness
+
+**Done.** Capture now covers both OS families, and the `tests/e2e/`
+harness promised since Phase 10 exists and runs in CI.
+
+### Linux golden-image capture
+
+- `linux/scripts/capture.sh` (embedded + sync-tested): finds the
+  installed root filesystem, tars it (`--numeric-owner --xattrs --acls
+  --one-file-system`, volatile paths pruned incl. machine-id and SSH
+  host keys) with zstd/gzip to auto-discovered scratch space, then uses
+  the same OS-agnostic capture-upload / capture-complete endpoints as
+  WinPE.
+- Served token-gated at `GET /v1/jobs/{id}/capture.sh`.
+- Capture jobs on the Linux path get a **capture cloud-init** instead of
+  an installer answer file — the live environment fetches and runs
+  capture.sh rather than overwriting the machine it's supposed to
+  archive.
+- `writeJSON` no longer HTML-escapes (`&` in presigned URLs must survive
+  capture.sh's sed-based JSON extraction).
+- UI capture modal now offers Linux images too.
+
+### End-to-end smoke harness (`tests/e2e/`)
+
+Black-box: builds the real api binary, runs it against real Postgres,
+and walks the full lifecycle over HTTP — operator creates
+image/profile/machine, the broker's redeem writes are seeded via SQL,
+then: iPXE render by token (echoes token, advances job), user-data with
+bearer, repeated phone-homes, completed job with event trail, token
+dead after completion, `/metrics` populated. A second test verifies
+capture-job user-data runs capture.sh (and that the script is
+token-gated). Wired into `make test-e2e` and a new CI job.
+
+**The harness immediately caught a real bug:** in dev mode the internal
+router was mounted at `/internal` while its routes already carried the
+`/internal/...` prefix, so every render endpoint 404'd at
+`/internal/internal/...`. The mTLS listener masked it. Routes are now
+prefix-relative and mounted consistently on both listeners.
+
+## Phase 16 — Wake-on-LAN scheduling via the edge agent
+
+**Done.** The API can't reach remote L2 segments, so wakes are queued
+centrally and broadcast by the edge agent that fronts the machine's LAN.
+
+- Migration `0006`: `wake_requests` (machine, MAC snapshot, site,
+  schedule, one-shot claim columns; partial index on due rows).
+- Store: `CreateWakeRequest`, `ClaimDueWakeRequests` (atomic
+  `UPDATE … FOR UPDATE SKIP LOCKED` — each request delivered to exactly
+  one agent), `ListWakeRequests`, `ReapWakeRequests` (worker reaps
+  claimed rows >7 days).
+- API: `POST /api/v1/machines/{id}/wake` (`{at?, site?}`; site defaults
+  to the machine's `attributes.site`; requires a primary MAC),
+  `GET …/wake` history, and the edge drain
+  `GET /v1/edge/wake-queue?site=&agent=` — shared-secret bearer
+  (`EDGE_WAKE_TOKEN`), constant-time compare, **fails closed** when
+  unconfigured (no dev-mode escape for an outward-facing action).
+- Edge agent: WoL poller goroutine alongside dnsmasq (15s interval,
+  no-op without `EDGE_WAKE_TOKEN`); magic-packet builder (6×0xFF +
+  16×MAC), 3-packet burst to UDP :9 on `LAN_BROADCAST` or the limited
+  broadcast. First tests in the edge-agent module.
+- UI: Wake button on the machine page with optional schedule time and
+  site override.
+- Tests: magic-packet unit tests (2), wake-queue store integration test
+  (due/future/site filtering, one-shot claim, history, reap), and an
+  e2e test covering operator-queue → edge-drain → double-drain-empty →
+  bad-token-404.
+
+## Phase 17 — Machine management polish
+
+**Done.**
+
+- `PATCH /api/v1/machines/{id}` (was missing entirely): partial update
+  of asset tag, MAC, vendor/model, attributes; `default_profile_id: ""`
+  clears the profile vs. omitted = unchanged
+  (`store.UpdateMachine` with `ClearDefaultProfile`).
+- `Machine.Attributes` switched `[]byte` → `json.RawMessage` so API
+  responses carry attributes as a JSON object (was base64) — unlocks
+  site + hardware inventory in the UI.
+- Machine page: Edit modal (incl. site + default profile), a Hardware
+  inventory card rendering the DMI/PCI fingerprint recorded by `/plan`,
+  and a Wake-request history card (queued vs. sent-by-agent).
+- `deployctl machines wake <id> [--at] [--site]`.
+- Tests: first deployctl tests (httptest-backed client: auth header,
+  JSON round-trip, error-body surfacing, env validation) and a store
+  integration test for partial update / attribute replacement /
+  profile clearing.
+
 ## Phase 11 — Final docs
 **Done.**
 

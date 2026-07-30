@@ -30,7 +30,7 @@ secrets: ## Generate the internal CA + per-service certs (one-time).
 build: build-images build-bootstrap build-ipxe ## Build everything.
 
 build-images: ## Build all service container images.
-	docker buildx bake --file docker-bake.hcl --set "*.platform=linux/amd64" --load
+	docker compose build
 
 build-bootstrap: ## Build the USB bootstrap image (calls bootstrap/Makefile).
 	$(MAKE) -C bootstrap all
@@ -57,15 +57,16 @@ migrate: ## Run DB migrations.
 
 test: test-unit ## Run unit tests.
 
-test-unit: ## Run Go and Node unit tests.
+test-unit: ## Run Go unit tests across all services.
 	cd services/api && go test ./...
 	cd services/auth-broker && go test ./...
 	cd services/worker && go test ./...
 	cd services/edge-agent && go test ./...
-	cd services/ui && npm test --silent
+	cd services/http-boot && go test ./...
+	cd services/deployctl && go test ./...
 
-test-e2e: build-bootstrap ## Run nested-KVM e2e (needs /dev/kvm).
-	$(MAKE) -C tests/e2e run
+test-e2e: ## Run the deploy-spine e2e smoke test (needs DEPLOY_TEST_PG_DSN).
+	cd tests/e2e && go test ./... -count=1 -v
 
 # --- security --------------------------------------------------------------
 

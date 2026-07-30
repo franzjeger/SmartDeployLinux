@@ -62,10 +62,12 @@ func (b *Broker) Routes() http.Handler {
 		r.With(httprate.LimitByIP(10, time.Minute)).
 			Post("/redeem", b.handleRedeem)
 
-		// Authenticated by API: operator UI calls here through internal
-		// service auth (mTLS or trusted-network header). For now we
-		// gate by network — only the API service can hit this path.
-		r.Post("/issue-code", b.handleIssueCode)
+		// Authenticated by API: operator UI calls here through the API,
+		// which presents the shared secret in X-Internal-Auth. Without
+		// the secret configured, anything on the internal network could
+		// mint deployment codes — so require it unless explicitly
+		// running dev-mode.
+		r.With(b.requireInternalSecret).Post("/issue-code", b.handleIssueCode)
 	})
 
 	return r
@@ -179,9 +181,14 @@ func (b *Broker) handleRedeem(w http.ResponseWriter, r *http.Request) {
 
 	jobID, err := b.store.CreateDeploymentJob(ctx, consumed.MachineID, consumed.ProfileID, consumed.ID)
 	if err != nil {
+		// Without a job row, every job-scoped endpoint downstream fails
+		// with no operator-visible signal. Fail the redeem loudly instead;
+		// the minted authkey is ephemeral and self-expires.
 		slog.ErrorContext(ctx, "create job", "err", err)
-		// Don't fail the redeem — the audit log and authkey are already
-		// in flight. The job row can be reconstructed from the audit.
+		b.audit(ctx, "auth_code.redeem_failed", &consumed.ID, srcIP,
+			map[string]any{"reason": "job_create_failed"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
+		return
 	}
 
 	// Mint a boot token bound to this auth_code. The chainload URL
@@ -231,6 +238,13 @@ type issueReq struct {
 	IssuedFor   string `json:"issued_for,omitempty"`
 	BindingCIDR string `json:"binding_cidr,omitempty"`
 	IssuedBy    string `json:"issued_by"` // user UUID, set by trusted caller
+
+	// Capture jobs: kind "capture" boots the same WinPE but runs
+	// capture.cmd, uploading the golden image as a new version of
+	// capture_image_id. Empty kind means "deploy".
+	Kind              string `json:"kind,omitempty"`
+	CaptureImageID    string `json:"capture_image_id,omitempty"`
+	CaptureVersionTag string `json:"capture_version_tag,omitempty"`
 }
 
 type issueResp struct {
@@ -260,6 +274,26 @@ func (b *Broker) handleIssueCode(w http.ResponseWriter, r *http.Request) {
 	issuedBy, err := uuid.Parse(req.IssuedBy)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_issued_by"})
+		return
+	}
+
+	kind := req.Kind
+	if kind == "" {
+		kind = "deploy"
+	}
+	var captureImageID *uuid.UUID
+	switch kind {
+	case "deploy":
+		// no capture target allowed
+	case "capture":
+		u, err := uuid.Parse(req.CaptureImageID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_capture_image_id"})
+			return
+		}
+		captureImageID = &u
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad_kind"})
 		return
 	}
 
@@ -303,7 +337,8 @@ func (b *Broker) handleIssueCode(w http.ResponseWriter, r *http.Request) {
 	hash := codes.Hash(code, b.pepper)
 
 	id, expiresAt, err := b.store.IssueCode(ctx, hash, machineID, profileID,
-		issuedBy, remoteAddr(r), binding, ttl, req.IssuedFor)
+		issuedBy, remoteAddr(r), binding, ttl, req.IssuedFor,
+		kind, captureImageID, req.CaptureVersionTag)
 	if err != nil {
 		slog.ErrorContext(ctx, "store issue", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
@@ -316,6 +351,7 @@ func (b *Broker) handleIssueCode(w http.ResponseWriter, r *http.Request) {
 		"ttl_sec":    int(ttl / time.Second),
 		"label":      req.IssuedFor,
 		"binding":    req.BindingCIDR,
+		"kind":       kind,
 	})
 
 	writeJSON(w, http.StatusOK, issueResp{Code: code, ExpiresAt: expiresAt})

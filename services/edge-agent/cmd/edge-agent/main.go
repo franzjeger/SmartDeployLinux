@@ -58,6 +58,10 @@ func main() {
 		}
 	}
 
+	// Wake-on-LAN queue drain runs alongside dnsmasq (no-op unless
+	// EDGE_WAKE_TOKEN is configured).
+	go runWakePoller(ctx)
+
 	if err := startDnsmasq(ctx); err != nil {
 		slog.Error("dnsmasq", "err", err)
 		os.Exit(4)

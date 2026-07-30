@@ -37,6 +37,8 @@ func main() {
 		auditMain(os.Args[2:])
 	case "bootstrap-sticks":
 		sticksMain(os.Args[2:])
+	case "images":
+		imagesMain(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -59,6 +61,7 @@ Groups:
   deployments        Issue deployment codes
   audit              Query the audit log
   bootstrap-sticks   Inventory of physical bootstrap USB sticks
+  images             List images, upload new image versions
 
 Environment:
   DEPLOY_API_URL                      e.g. https://deploy.example.com

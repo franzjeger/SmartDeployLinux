@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,12 @@ type issueReq struct {
 	TTLSeconds  int    `json:"ttl_seconds,omitempty"`
 	IssuedFor   string `json:"issued_for,omitempty"`
 	BindingCIDR string `json:"binding_cidr,omitempty"`
+
+	// kind "capture": boot the machine into WinPE and capture its
+	// sysprepped OS volume as a new version of capture_image_id.
+	Kind              string `json:"kind,omitempty"`
+	CaptureImageID    string `json:"capture_image_id,omitempty"`
+	CaptureVersionTag string `json:"capture_version_tag,omitempty"`
 }
 
 func (h *handlers) issueDeployment(w http.ResponseWriter, r *http.Request) {
@@ -69,21 +76,47 @@ func (h *handlers) issueDeployment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "machine_id and profile_id required", http.StatusBadRequest)
 		return
 	}
+	if req.Kind == "capture" {
+		// Capturing writes a new image version — require image.write on
+		// top of deployment.create.
+		if !auth.HasPerm(r.Context(), "image.write") {
+			http.Error(w, "forbidden: capture requires image.write", http.StatusForbidden)
+			return
+		}
+		if req.CaptureImageID == "" {
+			http.Error(w, "capture_image_id required for capture", http.StatusBadRequest)
+			return
+		}
+	}
 
 	// Forward to broker. Inject issued_by server-side.
 	body := map[string]any{
-		"machine_id":   req.MachineID,
-		"profile_id":   req.ProfileID,
-		"ttl_seconds":  req.TTLSeconds,
-		"issued_for":   req.IssuedFor,
-		"binding_cidr": req.BindingCIDR,
+		"machine_id":          req.MachineID,
+		"profile_id":          req.ProfileID,
+		"ttl_seconds":         req.TTLSeconds,
+		"issued_for":          req.IssuedFor,
+		"binding_cidr":        req.BindingCIDR,
+		"kind":                req.Kind,
+		"capture_image_id":    req.CaptureImageID,
+		"capture_version_tag": req.CaptureVersionTag,
 		"issued_by":    uid.String(),
 	}
 	bs, _ := json.Marshal(body)
 
 	brokerURL := getenv("DEPLOY_AUTH_BROKER_URL", "http://auth-broker:8081")
-	resp, err := http.Post(brokerURL+"/api/v1/bootstrap/issue-code",
-		"application/json", bytes.NewReader(bs))
+	breq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+		brokerURL+"/api/v1/bootstrap/issue-code", bytes.NewReader(bs))
+	if err != nil {
+		http.Error(w, "broker request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	breq.Header.Set("Content-Type", "application/json")
+	// Shared secret authenticating this service to the broker; the
+	// broker rejects issue-code calls without it when configured.
+	if s := os.Getenv("AUTH_BROKER_ISSUE_SHARED_SECRET"); s != "" {
+		breq.Header.Set("X-Internal-Auth", s)
+	}
+	resp, err := http.DefaultClient.Do(breq)
 	if err != nil {
 		http.Error(w, "broker unreachable: "+err.Error(), http.StatusBadGateway)
 		return
@@ -240,6 +273,10 @@ func parseLimit(s string, def int) int {
 // --- GET /api/v1/profiles --------------------------------------------
 
 func (h *handlers) listProfiles(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "image.read") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	profs, err := h.store.ListProfiles(r.Context())
 	if err != nil {
 		http.Error(w, "list profiles: "+err.Error(), http.StatusInternalServerError)
@@ -371,6 +408,10 @@ func (h *handlers) deleteProfile(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/v1/profiles/{id} returns the profile + vars + templates list.
 func (h *handlers) getProfile(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "image.read") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
@@ -456,6 +497,10 @@ func (h *handlers) deleteProfileTemplate(w http.ResponseWriter, r *http.Request)
 // --- images CRUD -----------------------------------------------------
 
 func (h *handlers) listImages(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "image.read") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	imgs, err := h.store.ListImages(r.Context())
 	if err != nil {
 		http.Error(w, "list images: "+err.Error(), http.StatusInternalServerError)
@@ -468,6 +513,10 @@ func (h *handlers) listImages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) getImage(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "image.read") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
@@ -597,6 +646,10 @@ func (h *handlers) deleteImage(w http.ResponseWriter, r *http.Request) {
 // --- GET /api/v1/jobs ------------------------------------------------
 
 func (h *handlers) listJobs(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "job.read") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	q := r.URL.Query()
 	f := store.JobFilter{
 		State: q.Get("state"),
@@ -624,6 +677,10 @@ func (h *handlers) listJobs(w http.ResponseWriter, r *http.Request) {
 // --- GET /api/v1/jobs/{id} -------------------------------------------
 
 func (h *handlers) getJob(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "job.read") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		http.Error(w, "bad id", http.StatusBadRequest)
@@ -647,6 +704,38 @@ func (h *handlers) getJob(w http.ResponseWriter, r *http.Request) {
 		events = []store.JobEvent{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"job": job, "events": events})
+}
+
+// --- POST /api/v1/jobs/{id}/cancel -----------------------------------
+
+// cancelJob moves a non-terminal job to cancelled and revokes its boot
+// tokens (via TransitionJob's terminal-state hook), so a mis-issued
+// deployment can be stopped before — or during — imaging.
+func (h *handlers) cancelJob(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "deployment.create") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.TransitionJob(r.Context(), id, "cancelled"); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "cancel: "+err.Error(), http.StatusConflict)
+		return
+	}
+	if u := auth.UserID(r.Context()); u != uuid.Nil {
+		_ = h.store.Audit(r.Context(), store.AuditEvent{
+			ActorID: &u, ActorKind: "user", Action: "job.cancelled",
+			SubjectID: &id, SubjectKind: "deployment_job",
+		})
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- DELETE /api/v1/machines/{id} ------------------------------------
@@ -780,6 +869,10 @@ func (h *handlers) catalogMenuIPXE(w http.ResponseWriter, r *http.Request) {
 // --- catalog (netboot.xyz-style distro browser) ----------------------
 
 func (h *handlers) listCatalog(w http.ResponseWriter, r *http.Request) {
+	if !auth.HasPerm(r.Context(), "image.read") {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	c, err := catalog.Load()
 	if err != nil {
 		http.Error(w, "load catalog: "+err.Error(), http.StatusInternalServerError)

@@ -20,6 +20,7 @@ import (
 	"github.com/your-org/deployserver/api/internal/auditlog"
 	"github.com/your-org/deployserver/api/internal/auth"
 	"github.com/your-org/deployserver/api/internal/eventbus"
+	"github.com/your-org/deployserver/api/internal/metrics"
 	"github.com/your-org/deployserver/api/internal/mtls"
 	"github.com/your-org/deployserver/api/internal/store"
 	"github.com/your-org/deployserver/api/internal/ui"
@@ -147,12 +148,14 @@ func serve() {
 		auth.SetUserResolver(auth.ResolverFromPool(st.Pool()))
 	}
 
+	reg := metrics.NewRegistry()
 	h := &handlers{
 		store:      st,
 		publicURL:  publicURL,
 		deployFQDN: deployFQDN,
 		verifier:   verifier,
 		bus:        eventbus.New(),
+		metrics:    reg,
 	}
 
 	// --- public router: phone-home + operator API + healthz -----------
@@ -169,6 +172,20 @@ func serve() {
 	pub.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Readiness: healthz says the process is up; readyz says it can
+	// actually serve (DB reachable). Compose/K8s should gate on readyz.
+	pub.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := st.Pool().Ping(ctx); err != nil {
+			http.Error(w, "db unreachable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	})
+	// Prometheus metrics. Not exposed through Caddy's public routes;
+	// scrape it over the internal network.
+	pub.Handle("/metrics", reg.Handler())
 
 	// Operator UI — embedded HTML+CSS+JS. Single-page app at /, with
 	// static assets under /assets/. ui.Handler() handles both.
@@ -182,9 +199,19 @@ func serve() {
 	// netboot.xyz-style picker.
 	pub.Get("/catalog/menu.ipxe", h.catalogMenuIPXE)
 
+	// Pre-auth: the SPA fetches issuer/client_id to run the OIDC
+	// code+PKCE flow. Public values only.
+	pub.Get("/api/v1/auth/config", h.authConfig)
+
+	// Edge-agent wake queue. Shared-secret bearer (EDGE_WAKE_TOKEN);
+	// fails closed when unconfigured.
+	pub.With(middleware.Timeout(15 * time.Second)).
+		Get("/v1/edge/wake-queue", h.edgeWakeQueue)
+
 	// Phone-home from in-OS installers (cross-WAN; bearer-token auth).
 	pub.Route("/v1/jobs/{id}/events", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
+		r.Use(reg.Middleware("phone_home"))
 		r.Post("/", h.appendDeploymentEvent)
 	})
 
@@ -193,6 +220,11 @@ func serve() {
 	// idle disconnects and ping keepalives internally.
 	pub.Route("/api/v1/jobs/{id}/events/stream", func(r chi.Router) {
 		if h.verifier != nil {
+			// EventSource cannot set an Authorization header; the SPA
+			// mirrors its ID token into a SameSite=Strict cookie. The
+			// fallback is scoped to this read-only GET route so the
+			// rest of the API stays header-only (no CSRF surface).
+			r.Use(cookieBearerFallback)
 			r.Use(auth.Middleware(h.verifier))
 		}
 		r.Get("/", h.streamJobEvents)
@@ -201,16 +233,21 @@ func serve() {
 	// WinPE per-job endpoints. Bearer-token + state-gated.
 	pub.Route("/v1/jobs/{id}", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
+		r.Use(reg.Middleware("winpe"))
 		r.Get("/deploy.cmd", h.winpeDeployCmd)
 		r.Post("/plan", h.winpePlan)
 		r.Get("/image.wim", h.winpeImage)
 		r.Get("/drivers.zip", h.winpeDrivers)
 		r.Get("/unattend.xml", h.winpeUnattend)
+		r.Get("/capture.sh", h.captureScript)
+		r.Post("/capture-upload", h.captureUpload)
+		r.Post("/capture-complete", h.captureComplete)
 	})
 
 	// Operator API (OIDC-authenticated).
 	pub.Route("/api/v1", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
+		r.Use(reg.Middleware("operator_api"))
 		if h.verifier != nil {
 			r.Use(auth.Middleware(h.verifier))
 		}
@@ -218,7 +255,10 @@ func serve() {
 		r.Get("/machines", h.listMachines)
 		r.Post("/machines", h.createMachine)
 		r.Get("/machines/{id}", h.getMachine)
+		r.Patch("/machines/{id}", h.updateMachine)
 		r.Delete("/machines/{id}", h.deleteMachine)
+		r.Post("/machines/{id}/wake", h.wakeMachine)
+		r.Get("/machines/{id}/wake", h.listWakes)
 		r.Get("/profiles", h.listProfiles)
 		r.Post("/profiles", h.createProfile)
 		r.Get("/profiles/{id}", h.getProfile)
@@ -231,14 +271,22 @@ func serve() {
 		r.Get("/images/{id}", h.getImage)
 		r.Patch("/images/{id}", h.updateImage)
 		r.Delete("/images/{id}", h.deleteImage)
+		r.Post("/blobs", h.createBlob)
+		r.Get("/driver-packs", h.listDriverPacks)
+		r.Post("/driver-packs", h.createDriverPack)
+		r.Delete("/driver-packs/versions/{id}", h.deleteDriverPackVersion)
+		r.Post("/images/{id}/versions", h.createImageVersion)
+		r.Get("/images/{id}/versions", h.listImageVersions)
 		r.Get("/catalog", h.listCatalog)
 		r.Post("/catalog/install", h.installFromCatalog)
 		r.Get("/jobs", h.listJobs)
 		r.Get("/jobs/{id}", h.getJob)
+		r.Post("/jobs/{id}/cancel", h.cancelJob)
 		r.Get("/audit", h.queryAudit)
 		r.Post("/deployments/issue", h.issueDeployment)
 		r.Post("/bootstrap-sticks", h.registerStick)
 		r.Get("/bootstrap-sticks", h.listSticks)
+		r.Get("/bootstrap-sticks/config", h.stickConfig)
 	})
 
 	// --- internal router: render endpoints, called by http-boot only --
@@ -249,10 +297,14 @@ func serve() {
 	intr.Use(middleware.Recoverer)
 	intr.Use(middleware.Timeout(30 * time.Second))
 
+	// Routes here are relative to /internal — the router is mounted at
+	// /internal on whichever listener serves it (mTLS listener or, in
+	// dev mode, the public one). Registering absolute /internal/...
+	// paths here would double the prefix when mounted.
 	intr.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	intr.Route("/internal/render", func(r chi.Router) {
+	intr.Route("/render", func(r chi.Router) {
 		r.Get("/by-token/{token}", h.renderByToken)
 		r.Get("/by-token/{token}/user-data", h.renderUserDataByToken)
 		r.Get("/by-token/{token}/meta-data", h.renderMetaDataByToken)
@@ -284,9 +336,14 @@ func serve() {
 			slog.Error("mtls load", "err", err)
 			os.Exit(2)
 		}
+		internalRoot := chi.NewRouter()
+		internalRoot.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("ok"))
+		})
+		internalRoot.Mount("/internal", intr)
 		internalSrv = &http.Server{
 			Addr:              internalListen,
-			Handler:           intr,
+			Handler:           internalRoot,
 			TLSConfig:         bundle.ServerConfig(),
 			ReadHeaderTimeout: 5 * time.Second,
 			WriteTimeout:      30 * time.Second,
@@ -322,6 +379,19 @@ func serve() {
 	if internalSrv != nil {
 		_ = internalSrv.Shutdown(shutdown)
 	}
+}
+
+// cookieBearerFallback promotes the SPA's session cookie to an
+// Authorization header when none is present. Used only on the SSE route.
+func cookieBearerFallback(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			if c, err := r.Cookie("deploy_session"); err == nil && c.Value != "" {
+				r.Header.Set("Authorization", "Bearer "+c.Value)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func getenv(k, def string) string {

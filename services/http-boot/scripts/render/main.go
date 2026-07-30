@@ -11,7 +11,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"html/template"
+	"text/template"
 	"io"
 	"log/slog"
 	"net/http"
@@ -178,28 +178,26 @@ func (h *handlers) renderIPXEByMAC(w http.ResponseWriter, r *http.Request) {
 	h.writeIPXE(w, r, data)
 }
 
+// NOTE: iPXE has no backslash line-continuation syntax — every command
+// must be a single line — and these are text/template (NOT html/template)
+// so URLs with & are not entity-escaped into non-bootable kernel args.
+//
+// The nocloud datasource URL uses the one-shot boot token, matching
+// nginx's /boot/<token>/user-data route and the API's token-gated
+// render endpoints. The machine UUID is intentionally never used in
+// boot URLs (SECURITY.md §4 #1).
 var linuxTpl = template.Must(template.New("linux").Parse(`#!ipxe
 echo Deploying {{.Profile.Name}} to {{.Machine.AssetTag}} ({{.Machine.ID}})
-kernel {{.Image.KernelURL}} initrd=initrd.img \
-    autoinstall \
-    ds=nocloud-net;s=https://{{.DeployFQDN}}/boot/{{.Machine.ID}}/ \
-    ip=dhcp \
-    cloud-config-url=/dev/null
+kernel {{.Image.KernelURL}} initrd=initrd autoinstall ip=dhcp "ds=nocloud-net;s=https://{{.DeployFQDN}}/boot/{{.OneShotToken}}/"
 initrd {{.Image.InitrdURL}}
 boot
 `))
 
 var windowsTpl = template.Must(template.New("windows").Parse(`#!ipxe
 echo Deploying Windows ({{.Profile.Name}}) to {{.Machine.AssetTag}}
-kernel {{.Image.WimbootURL}} \
-    initrd=boot.wim \
-    initrd=BCD \
-    initrd=boot.sdi \
-    initrd=bootmgr.exe \
-    initrd=fonts/wgl4_boot.ttf
+kernel {{.Image.WimbootURL}}
 initrd --name boot.wim {{.Image.BootWimURL}}
-imgargs wimboot _DEPLOY_JOB_ID={{.JobID}} _DEPLOY_TOKEN={{.OneShotToken}} \
-    _DEPLOY_API=https://{{.DeployFQDN}}/api
+imgargs wimboot _DEPLOY_JOB_ID={{.JobID}} _DEPLOY_TOKEN={{.OneShotToken}} _DEPLOY_API=https://{{.DeployFQDN}}
 boot
 `))
 

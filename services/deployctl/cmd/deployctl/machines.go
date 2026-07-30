@@ -21,10 +21,46 @@ func machinesMain(args []string) {
 		machinesCreate(args[1:])
 	case "get":
 		machinesGet(args[1:])
+	case "wake":
+		machinesWake(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "machines: unknown subcommand %q\n", args[0])
 		os.Exit(2)
 	}
+}
+
+// machinesWake queues a wake-on-LAN request for a machine.
+// Usage: deployctl machines wake <machine-id> [--at RFC3339] [--site S]
+func machinesWake(args []string) {
+	fs := flag.NewFlagSet("machines wake", flag.ExitOnError)
+	at := fs.String("at", "", "schedule time (RFC3339); empty = next agent poll")
+	site := fs.String("site", "", "site override (default: machine's site attribute)")
+	if len(args) == 0 || args[0] == "" || args[0][0] == '-' {
+		fmt.Fprintln(os.Stderr, "usage: deployctl machines wake <machine-id> [--at RFC3339] [--site S]")
+		os.Exit(2)
+	}
+	id := args[0]
+	_ = fs.Parse(args[1:])
+
+	c, err := client.New()
+	if err != nil {
+		die(err)
+	}
+	body := map[string]any{}
+	if *at != "" {
+		body["at"] = *at
+	}
+	if *site != "" {
+		body["site"] = *site
+	}
+	var out struct {
+		WakeID string `json:"wake_id"`
+		Site   string `json:"site"`
+	}
+	if err := c.Do("POST", "/api/v1/machines/"+id+"/wake", body, &out); err != nil {
+		die(err)
+	}
+	fmt.Printf("wake %s queued for site %q\n", out.WakeID, out.Site)
 }
 
 func machinesList(args []string) {

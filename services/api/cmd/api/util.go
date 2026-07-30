@@ -11,12 +11,3 @@ func parseIP(s string) netip.Addr {
 	a, _ := netip.ParseAddr(strings.TrimSpace(s))
 	return a
 }
-
-func indexByte(s string, c byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
-}

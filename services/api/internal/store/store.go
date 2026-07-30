@@ -23,6 +23,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/your-org/deployserver/api/internal/driverpack"
 )
 
 //go:embed migrations/*.sql
@@ -120,15 +122,18 @@ func (s *Store) MigrateUp(ctx context.Context) error {
 // --- machines ---------------------------------------------------------
 
 type Machine struct {
-	ID                uuid.UUID
-	AssetTag          *string
-	MACPrimary        *string
-	UUIDSMBIOS        *uuid.UUID
-	Vendor            *string
-	Model             *string
-	DefaultProfileID  *uuid.UUID
-	Attributes        []byte
-	CreatedAt         time.Time
+	ID               uuid.UUID
+	AssetTag         *string
+	MACPrimary       *string
+	UUIDSMBIOS       *uuid.UUID
+	Vendor           *string
+	Model            *string
+	DefaultProfileID *uuid.UUID
+	// RawMessage (not []byte) so API responses carry the attributes as a
+	// JSON object instead of base64 — the UI reads site + hardware
+	// inventory out of it.
+	Attributes json.RawMessage
+	CreatedAt  time.Time
 }
 
 func (s *Store) GetMachine(ctx context.Context, id uuid.UUID) (*Machine, error) {
@@ -189,6 +194,45 @@ type CreateMachineInput struct {
 	Model            *string
 	DefaultProfileID *uuid.UUID
 	Attributes       []byte
+}
+
+// UpdateMachineInput carries partial updates: nil means "leave as is".
+// ClearDefaultProfile distinguishes "unset the profile" from "no change"
+// (both would otherwise be a nil pointer).
+type UpdateMachineInput struct {
+	AssetTag            *string
+	MACPrimary          *string
+	Vendor              *string
+	Model               *string
+	DefaultProfileID    *uuid.UUID
+	ClearDefaultProfile bool
+	Attributes          []byte // replaces attributes wholesale when non-nil
+}
+
+func (s *Store) UpdateMachine(ctx context.Context, id uuid.UUID, in UpdateMachineInput) (*Machine, error) {
+	var profileArg any
+	if in.DefaultProfileID != nil {
+		profileArg = *in.DefaultProfileID
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE machines SET
+			asset_tag          = COALESCE($2, asset_tag),
+			mac_primary        = COALESCE($3::macaddr, mac_primary),
+			vendor             = COALESCE($4, vendor),
+			model              = COALESCE($5, model),
+			default_profile_id = CASE WHEN $7 THEN NULL
+			                          ELSE COALESCE($6::uuid, default_profile_id) END,
+			attributes         = COALESCE($8::jsonb, attributes)
+		WHERE id = $1`,
+		id, in.AssetTag, in.MACPrimary, in.Vendor, in.Model,
+		profileArg, in.ClearDefaultProfile, in.Attributes)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return s.GetMachine(ctx, id)
 }
 
 func (s *Store) ListMachines(ctx context.Context, limit, offset int) ([]Machine, error) {
@@ -1252,6 +1296,532 @@ func (s *Store) LockExpiredAuthCodes(ctx context.Context) (int64, error) {
 		WHERE redeemed_at IS NULL
 		  AND locked_at IS NULL
 		  AND expires_at <= now()`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ReapExpiredOneShotTokens deletes one_shot_tokens that were consumed or
+// expired more than `older` ago. Keeps the table from growing unbounded.
+func (s *Store) ReapExpiredOneShotTokens(ctx context.Context, older time.Duration) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM one_shot_tokens
+		WHERE (consumed_at IS NOT NULL AND consumed_at < now() - $1::interval)
+		   OR (expires_at < now() - $1::interval)`,
+		older.String())
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// --- phone-home / job progression -------------------------------------
+
+// VerifyPhoneHomeToken checks — without consuming — that the hashed
+// token is live and bound to the given job, and that the job is not in
+// a terminal state. Installers phone home repeatedly across the whole
+// deployment, so the token stays valid until TransitionJob revokes it
+// at completion.
+func (s *Store) VerifyPhoneHomeToken(ctx context.Context, tokenHash string, jobID uuid.UUID) (machineID, profileID uuid.UUID, err error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT j.machine_id, j.profile_id
+		FROM one_shot_tokens t
+		JOIN deployment_jobs j ON j.auth_code_id = t.auth_code_id
+		WHERE t.token_hash = $1
+		  AND t.purpose IN ('boot','phone-home')
+		  AND t.consumed_at IS NULL
+		  AND t.expires_at > now()
+		  AND j.id = $2
+		  AND j.state IN ('pending','bootstrapped','imaging','post_install')`,
+		tokenHash, jobID)
+	if err := row.Scan(&machineID, &profileID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, uuid.Nil, ErrTokenInvalid
+		}
+		return uuid.Nil, uuid.Nil, err
+	}
+	return machineID, profileID, nil
+}
+
+// jobStatePath is the happy-path ordering of deployment states.
+var jobStatePath = []string{"pending", "bootstrapped", "imaging", "post_install", "completed"}
+
+// AdvanceJob moves a job to `to`, applying any intermediate happy-path
+// transitions required to get there (e.g. an installer whose first
+// report is "imaging" while the job still sits in "pending"). "failed"
+// and "cancelled" are reachable from any non-terminal state via
+// TransitionJob's graph. A no-op if the job is already at or past `to`.
+func (s *Store) AdvanceJob(ctx context.Context, jobID uuid.UUID, to string) error {
+	if to == "failed" || to == "cancelled" {
+		return s.TransitionJob(ctx, jobID, to)
+	}
+	targetIdx := -1
+	for i, st := range jobStatePath {
+		if st == to {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx < 0 {
+		return fmt.Errorf("unknown target state %q", to)
+	}
+	var cur string
+	row := s.pool.QueryRow(ctx, `SELECT state::text FROM deployment_jobs WHERE id = $1`, jobID)
+	if err := row.Scan(&cur); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	curIdx := -1
+	for i, st := range jobStatePath {
+		if st == cur {
+			curIdx = i
+			break
+		}
+	}
+	if curIdx < 0 {
+		return fmt.Errorf("job in terminal state %q", cur)
+	}
+	for i := curIdx + 1; i <= targetIdx; i++ {
+		if err := s.TransitionJob(ctx, jobID, jobStatePath[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// --- driver packs -----------------------------------------------------
+
+// MatchedDriverPack is a driver pack version selected for a machine,
+// with the blob key needed to build a download URL.
+type MatchedDriverPack struct {
+	VersionID  uuid.UUID `json:"version_id"`
+	Vendor     string    `json:"vendor"`
+	Model      string    `json:"model"`
+	VersionTag string    `json:"version_tag"`
+	BlobKey    string    `json:"blob_key"`
+}
+
+// MatchDriverPacks loads every driver pack version (with rules and blob
+// key) for the given OS family and runs the driverpack matcher over the
+// fingerprint. Results come back most-specific-first.
+func (s *Store) MatchDriverPacks(ctx context.Context, fp driverpack.Fingerprint) ([]MatchedDriverPack, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT pv.id, pv.pack_id, p.vendor, p.model, p.os_family, p.os_version,
+		       pv.version_tag, b.s3_key,
+		       COALESCE(r.match_type, ''), COALESCE(r.match_value, '')
+		FROM driver_pack_versions pv
+		JOIN driver_packs p ON p.id = pv.pack_id
+		JOIN blobs b ON b.id = pv.blob_id
+		LEFT JOIN driver_match_rules r ON r.pack_version_id = pv.id
+		WHERE lower(p.os_family) = lower($1)
+		ORDER BY pv.id`, fp.OSFamily)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type cand struct {
+		pv      driverpack.PackVersion
+		blobKey string
+	}
+	byID := map[uuid.UUID]*cand{}
+	var order []uuid.UUID
+	for rows.Next() {
+		var id, packID uuid.UUID
+		var vendor, model, osFamily, osVersion, versionTag, blobKey, rType, rValue string
+		if err := rows.Scan(&id, &packID, &vendor, &model, &osFamily, &osVersion,
+			&versionTag, &blobKey, &rType, &rValue); err != nil {
+			return nil, err
+		}
+		c, ok := byID[id]
+		if !ok {
+			c = &cand{pv: driverpack.PackVersion{
+				ID: id, PackID: packID, Vendor: vendor, Model: model,
+				OSFamily: osFamily, OSVersion: osVersion, VersionTag: versionTag,
+			}, blobKey: blobKey}
+			byID[id] = c
+			order = append(order, id)
+		}
+		if rType != "" {
+			c.pv.Rules = append(c.pv.Rules, driverpack.Rule{Type: rType, Value: rValue})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	candidates := make([]driverpack.PackVersion, 0, len(order))
+	for _, id := range order {
+		candidates = append(candidates, byID[id].pv)
+	}
+	selected := driverpack.Select(fp, candidates)
+	out := make([]MatchedDriverPack, 0, len(selected))
+	for _, pv := range selected {
+		out = append(out, MatchedDriverPack{
+			VersionID: pv.ID, Vendor: pv.Vendor, Model: pv.Model,
+			VersionTag: pv.VersionTag, BlobKey: byID[pv.ID].blobKey,
+		})
+	}
+	return out, nil
+}
+
+// RecordMachineInventory merges a hardware fingerprint reported by the
+// installer into machines.attributes and updates vendor/model if they
+// were unset. This gives operators auto-populated hardware inventory
+// from the first deployment onward.
+func (s *Store) RecordMachineInventory(ctx context.Context, machineID uuid.UUID, inventory []byte) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE machines
+		SET attributes = attributes || jsonb_build_object('hardware', $2::jsonb),
+		    vendor = COALESCE(vendor, $2::jsonb->>'dmi_vendor'),
+		    model  = COALESCE(model,  $2::jsonb->>'dmi_product')
+		WHERE id = $1`, machineID, inventory)
+	return err
+}
+
+// --- blobs / image versions (ingest) -----------------------------------
+
+type Blob struct {
+	ID        uuid.UUID `json:"id"`
+	SHA256    string    `json:"sha256"`
+	SizeBytes int64     `json:"size_bytes"`
+	S3Bucket  string    `json:"s3_bucket"`
+	S3Key     string    `json:"s3_key"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// CreateBlob registers an object about to be uploaded. Idempotent on
+// sha256: re-registering the same content returns the existing row, so
+// a retried upload doesn't strand duplicates.
+func (s *Store) CreateBlob(ctx context.Context, sha256hex string, sizeBytes int64, bucket, key string) (*Blob, error) {
+	b := &Blob{}
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO blobs (sha256, size_bytes, s3_bucket, s3_key)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (sha256) DO UPDATE SET sha256 = EXCLUDED.sha256
+		RETURNING id, sha256, size_bytes, s3_bucket, s3_key, created_at`,
+		sha256hex, sizeBytes, bucket, key).
+		Scan(&b.ID, &b.SHA256, &b.SizeBytes, &b.S3Bucket, &b.S3Key, &b.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+type ImageVersion struct {
+	ID         uuid.UUID `json:"id"`
+	ImageID    uuid.UUID `json:"image_id"`
+	VersionTag string    `json:"version_tag"`
+	BlobID     uuid.UUID `json:"blob_id"`
+	BlobKey    string    `json:"blob_key"`
+	BlobSHA256 string    `json:"blob_sha256"`
+	SizeBytes  int64     `json:"size_bytes"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// CreateImageVersion links an uploaded blob to an image as a new version.
+func (s *Store) CreateImageVersion(ctx context.Context, imageID, blobID uuid.UUID, versionTag string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO image_versions (image_id, blob_id, version_tag)
+		VALUES ($1, $2, $3)
+		RETURNING id`, imageID, blobID, versionTag).Scan(&id)
+	return id, err
+}
+
+func (s *Store) ListImageVersions(ctx context.Context, imageID uuid.UUID) ([]ImageVersion, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT iv.id, iv.image_id, iv.version_tag, iv.blob_id,
+		       b.s3_key, b.sha256, b.size_bytes, iv.created_at
+		FROM image_versions iv
+		JOIN blobs b ON b.id = iv.blob_id
+		WHERE iv.image_id = $1
+		ORDER BY iv.created_at DESC`, imageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ImageVersion
+	for rows.Next() {
+		var v ImageVersion
+		if err := rows.Scan(&v.ID, &v.ImageID, &v.VersionTag, &v.BlobID,
+			&v.BlobKey, &v.BlobSHA256, &v.SizeBytes, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// --- capture jobs ------------------------------------------------------
+
+type JobCapture struct {
+	Kind       string
+	ImageID    *uuid.UUID
+	VersionTag string
+}
+
+// GetJobCapture returns the job's kind and (for capture jobs) the target
+// image + version tag.
+func (s *Store) GetJobCapture(ctx context.Context, jobID uuid.UUID) (*JobCapture, error) {
+	jc := &JobCapture{}
+	var tag *string
+	row := s.pool.QueryRow(ctx, `
+		SELECT kind, capture_image_id, capture_version_tag
+		FROM deployment_jobs WHERE id = $1`, jobID)
+	if err := row.Scan(&jc.Kind, &jc.ImageID, &tag); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if tag != nil {
+		jc.VersionTag = *tag
+	}
+	return jc, nil
+}
+
+// GetBlobBySHA looks a blob up by its content hash.
+func (s *Store) GetBlobBySHA(ctx context.Context, sha256hex string) (*Blob, error) {
+	b := &Blob{}
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, sha256, size_bytes, s3_bucket, s3_key, created_at
+		FROM blobs WHERE sha256 = $1`, sha256hex)
+	if err := row.Scan(&b.ID, &b.SHA256, &b.SizeBytes, &b.S3Bucket, &b.S3Key, &b.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return b, nil
+}
+
+// --- driver pack management -------------------------------------------
+
+type DriverPackRow struct {
+	PackID     uuid.UUID       `json:"pack_id"`
+	Vendor     string          `json:"vendor"`
+	Model      string          `json:"model"`
+	OSFamily   string          `json:"os_family"`
+	OSVersion  string          `json:"os_version"`
+	VersionID  uuid.UUID       `json:"version_id"`
+	VersionTag string          `json:"version_tag"`
+	BlobSHA256 string          `json:"blob_sha256"`
+	SizeBytes  int64           `json:"size_bytes"`
+	Rules      []DriverRule    `json:"rules"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+type DriverRule struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+// CreateDriverPackVersion upserts the pack identity, adds a version
+// backed by the blob, and attaches its match rules — atomically.
+func (s *Store) CreateDriverPackVersion(ctx context.Context, vendor, model, osFamily, osVersion, versionTag string, blobID uuid.UUID, rules []DriverRule) (uuid.UUID, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var packID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO driver_packs (vendor, model, os_family, os_version)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (vendor, model, os_family, os_version)
+		DO UPDATE SET vendor = EXCLUDED.vendor
+		RETURNING id`, vendor, model, osFamily, osVersion).Scan(&packID); err != nil {
+		return uuid.Nil, err
+	}
+	var versionID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO driver_pack_versions (pack_id, version_tag, blob_id)
+		VALUES ($1, $2, $3)
+		RETURNING id`, packID, versionTag, blobID).Scan(&versionID); err != nil {
+		return uuid.Nil, err
+	}
+	for _, r := range rules {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO driver_match_rules (pack_version_id, match_type, match_value)
+			VALUES ($1, $2, $3)`, versionID, r.Type, r.Value); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	return versionID, nil
+}
+
+// ListDriverPacks returns every pack version with its rules, newest first.
+func (s *Store) ListDriverPacks(ctx context.Context) ([]DriverPackRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT p.id, p.vendor, p.model, p.os_family, p.os_version,
+		       pv.id, pv.version_tag, b.sha256, b.size_bytes, pv.created_at,
+		       COALESCE(r.match_type, ''), COALESCE(r.match_value, '')
+		FROM driver_pack_versions pv
+		JOIN driver_packs p ON p.id = pv.pack_id
+		JOIN blobs b ON b.id = pv.blob_id
+		LEFT JOIN driver_match_rules r ON r.pack_version_id = pv.id
+		ORDER BY pv.created_at DESC, pv.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byVersion := map[uuid.UUID]*DriverPackRow{}
+	var order []uuid.UUID
+	for rows.Next() {
+		var row DriverPackRow
+		var rType, rValue string
+		if err := rows.Scan(&row.PackID, &row.Vendor, &row.Model, &row.OSFamily,
+			&row.OSVersion, &row.VersionID, &row.VersionTag, &row.BlobSHA256,
+			&row.SizeBytes, &row.CreatedAt, &rType, &rValue); err != nil {
+			return nil, err
+		}
+		existing, ok := byVersion[row.VersionID]
+		if !ok {
+			row.Rules = []DriverRule{}
+			byVersion[row.VersionID] = &row
+			order = append(order, row.VersionID)
+			existing = &row
+		}
+		if rType != "" {
+			existing.Rules = append(existing.Rules, DriverRule{Type: rType, Value: rValue})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]DriverPackRow, 0, len(order))
+	for _, id := range order {
+		out = append(out, *byVersion[id])
+	}
+	return out, nil
+}
+
+// DeleteDriverPackVersion removes a version (rules cascade). The pack
+// row is left even if empty — it's identity, not payload.
+func (s *Store) DeleteDriverPackVersion(ctx context.Context, versionID uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM driver_pack_versions WHERE id = $1`, versionID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// --- wake-on-LAN ------------------------------------------------------
+
+type WakeRequest struct {
+	ID          uuid.UUID  `json:"id"`
+	MachineID   uuid.UUID  `json:"machine_id"`
+	MAC         string     `json:"mac"`
+	Site        string     `json:"site"`
+	ScheduledAt time.Time  `json:"scheduled_at"`
+	ClaimedAt   *time.Time `json:"claimed_at"`
+	ClaimedBy   *string    `json:"claimed_by"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// CreateWakeRequest queues a wake for the machine. scheduledAt zero
+// means "as soon as an agent polls".
+func (s *Store) CreateWakeRequest(ctx context.Context, machineID uuid.UUID, mac, site string, scheduledAt time.Time, requestedBy *uuid.UUID) (uuid.UUID, error) {
+	if site == "" {
+		site = "default"
+	}
+	if scheduledAt.IsZero() {
+		scheduledAt = time.Now().UTC()
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO wake_requests (machine_id, mac, site, scheduled_at, requested_by)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id`, machineID, mac, site, scheduledAt, requestedBy).Scan(&id)
+	return id, err
+}
+
+// ClaimDueWakeRequests atomically claims every unclaimed request for the
+// site whose schedule has arrived, and returns them. Each request is
+// delivered to exactly one agent (the UPDATE is the claim), so two
+// agents polling the same site don't double-wake — though WoL itself is
+// idempotent, duplicate storms across large sites are not free.
+func (s *Store) ClaimDueWakeRequests(ctx context.Context, site, agent string, limit int) ([]WakeRequest, error) {
+	if site == "" {
+		site = "default"
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		UPDATE wake_requests w
+		SET claimed_at = now(), claimed_by = $2
+		FROM (
+			SELECT id FROM wake_requests
+			WHERE site = $1 AND claimed_at IS NULL AND scheduled_at <= now()
+			ORDER BY scheduled_at
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		) due
+		WHERE w.id = due.id
+		RETURNING w.id, w.machine_id, w.mac::text, w.site, w.scheduled_at,
+		          w.claimed_at, w.claimed_by, w.created_at`,
+		site, agent, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WakeRequest
+	for rows.Next() {
+		var w WakeRequest
+		if err := rows.Scan(&w.ID, &w.MachineID, &w.MAC, &w.Site,
+			&w.ScheduledAt, &w.ClaimedAt, &w.ClaimedBy, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// ListWakeRequests returns a machine's wake history, newest first.
+func (s *Store) ListWakeRequests(ctx context.Context, machineID uuid.UUID, limit int) ([]WakeRequest, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, machine_id, mac::text, site, scheduled_at, claimed_at, claimed_by, created_at
+		FROM wake_requests WHERE machine_id = $1
+		ORDER BY created_at DESC LIMIT $2`, machineID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WakeRequest
+	for rows.Next() {
+		var w WakeRequest
+		if err := rows.Scan(&w.ID, &w.MachineID, &w.MAC, &w.Site,
+			&w.ScheduledAt, &w.ClaimedAt, &w.ClaimedBy, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// ReapWakeRequests deletes claimed requests older than `older`.
+func (s *Store) ReapWakeRequests(ctx context.Context, older time.Duration) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM wake_requests
+		WHERE claimed_at IS NOT NULL AND claimed_at < now() - $1::interval`,
+		older.String())
 	if err != nil {
 		return 0, err
 	}
