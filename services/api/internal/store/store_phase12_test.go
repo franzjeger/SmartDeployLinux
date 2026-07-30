@@ -196,6 +196,93 @@ func TestRecordMachineInventory_MergesAttributes(t *testing.T) {
 	}
 }
 
+func TestCaptureJobKindAndTarget(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	_, _, jobID := fixtureJob(t, st, "sha256:cap1", "bootstrapped")
+
+	// Default kind is deploy.
+	jc, err := st.GetJobCapture(ctx, jobID)
+	must(t, err)
+	if jc.Kind != "deploy" || jc.ImageID != nil {
+		t.Fatalf("default job capture: %+v", jc)
+	}
+
+	// Flag it as a capture job (as the broker does from the auth code).
+	var imageID uuid.UUID
+	must(t, st.Pool().QueryRow(ctx, `
+		INSERT INTO images (name, os_family, os_version, arch)
+		VALUES ('golden-cap', 'windows', '11', 'amd64') RETURNING id`).Scan(&imageID))
+	must(t, st.Pool().QueryRow(ctx, `
+		UPDATE deployment_jobs
+		SET kind = 'capture', capture_image_id = $2, capture_version_tag = '24H2-v1'
+		WHERE id = $1 RETURNING id`, jobID, imageID).Scan(new(uuid.UUID)))
+
+	jc, err = st.GetJobCapture(ctx, jobID)
+	must(t, err)
+	if jc.Kind != "capture" || jc.ImageID == nil || *jc.ImageID != imageID || jc.VersionTag != "24H2-v1" {
+		t.Fatalf("capture target: %+v", jc)
+	}
+}
+
+func TestDriverPackVersionCRUD(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	sha := randSHA(t)
+	blob, err := st.CreateBlob(ctx, sha, 4096, "drivers", "cd/"+sha+"-pack.zip")
+	must(t, err)
+
+	rules := []DriverRule{
+		{Type: "dmi-product", Value: "Latitude 7440"},
+		{Type: "pci-vid-did", Value: "8086:1521"},
+	}
+	vID, err := st.CreateDriverPackVersion(ctx,
+		"Dell Inc.", "Latitude 7440", "windows", "11", "v1", blob.ID, rules)
+	must(t, err)
+
+	// Same pack identity + new tag reuses the driver_packs row.
+	_, err = st.CreateDriverPackVersion(ctx,
+		"Dell Inc.", "Latitude 7440", "windows", "11", "v2", blob.ID, rules[:1])
+	must(t, err)
+	var packCount int
+	must(t, st.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM driver_packs WHERE vendor = 'Dell Inc.'`).Scan(&packCount))
+	if packCount != 1 {
+		t.Fatalf("pack identity duplicated: %d rows", packCount)
+	}
+
+	packs, err := st.ListDriverPacks(ctx)
+	must(t, err)
+	if len(packs) != 2 {
+		t.Fatalf("listed %d versions, want 2", len(packs))
+	}
+	var v1 *DriverPackRow
+	for i := range packs {
+		if packs[i].VersionID == vID {
+			v1 = &packs[i]
+		}
+	}
+	if v1 == nil || len(v1.Rules) != 2 || v1.SizeBytes != 4096 {
+		t.Fatalf("v1 row wrong: %+v", v1)
+	}
+
+	// The matcher sees the ingested pack immediately.
+	matched, err := st.MatchDriverPacks(ctx, driverpack.Fingerprint{
+		DMIProduct: "Latitude 7440", OSFamily: "windows", OSVersion: "11",
+	})
+	must(t, err)
+	if len(matched) != 2 {
+		t.Fatalf("matcher found %d, want 2", len(matched))
+	}
+
+	must(t, st.DeleteDriverPackVersion(ctx, vID))
+	if err := st.DeleteDriverPackVersion(ctx, vID); err != ErrNotFound {
+		t.Fatalf("second delete: %v", err)
+	}
+}
+
 func TestBlobAndImageVersionIngest(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

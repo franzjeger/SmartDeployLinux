@@ -186,12 +186,18 @@ func (s *Store) CreateOneShotToken(ctx context.Context, authCodeID uuid.UUID, to
 	return id, err
 }
 
-// CreateDeploymentJob inserts a new deployment_jobs row in state 'bootstrapped'.
+// CreateDeploymentJob inserts a new deployment_jobs row in state
+// 'bootstrapped', copying the job kind and capture target from the auth
+// code (a capture code produces a capture job; see migration 0005).
 func (s *Store) CreateDeploymentJob(ctx context.Context, machineID, profileID, authCodeID uuid.UUID) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO deployment_jobs (machine_id, profile_id, auth_code_id, state, started_at)
-		VALUES ($1, $2, $3, 'bootstrapped', now())
+		INSERT INTO deployment_jobs
+		    (machine_id, profile_id, auth_code_id, state, started_at,
+		     kind, capture_image_id, capture_version_tag)
+		SELECT $1, $2, $3, 'bootstrapped', now(),
+		       kind, capture_image_id, capture_version_tag
+		FROM auth_codes WHERE id = $3
 		RETURNING id`, machineID, profileID, authCodeID).Scan(&id)
 	return id, err
 }
@@ -215,7 +221,7 @@ func (s *Store) CountIssuedByActorRecently(ctx context.Context, actor uuid.UUID,
 
 // IssueCode inserts a row. The cleartext code never enters this function;
 // caller hashes it first.
-func (s *Store) IssueCode(ctx context.Context, codeHash string, machineID, profileID, issuedBy uuid.UUID, issuedFrom netip.Addr, bindingCIDR *netip.Prefix, ttl time.Duration, label string) (uuid.UUID, time.Time, error) {
+func (s *Store) IssueCode(ctx context.Context, codeHash string, machineID, profileID, issuedBy uuid.UUID, issuedFrom netip.Addr, bindingCIDR *netip.Prefix, ttl time.Duration, label, kind string, captureImageID *uuid.UUID, captureVersionTag string) (uuid.UUID, time.Time, error) {
 	var id uuid.UUID
 	var expiresAt time.Time
 	var binding *string
@@ -223,14 +229,22 @@ func (s *Store) IssueCode(ctx context.Context, codeHash string, machineID, profi
 		s := bindingCIDR.String()
 		binding = &s
 	}
+	if kind == "" {
+		kind = "deploy"
+	}
+	var tagPtr *string
+	if captureVersionTag != "" {
+		tagPtr = &captureVersionTag
+	}
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO auth_codes
 		   (code_hash, machine_id, profile_id, issued_by, issued_from_ip,
-		    binding_cidr, expires_at, label)
-		VALUES ($1, $2, $3, $4, $5, $6, now() + $7::interval, $8)
+		    binding_cidr, expires_at, label, kind, capture_image_id,
+		    capture_version_tag)
+		VALUES ($1, $2, $3, $4, $5, $6, now() + $7::interval, $8, $9, $10, $11)
 		RETURNING id, expires_at`,
 		codeHash, machineID, profileID, issuedBy, issuedFrom.String(),
-		binding, ttl.String(), label).Scan(&id, &expiresAt)
+		binding, ttl.String(), label, kind, captureImageID, tagPtr).Scan(&id, &expiresAt)
 	return id, expiresAt, err
 }
 

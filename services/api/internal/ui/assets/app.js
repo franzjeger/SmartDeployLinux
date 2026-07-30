@@ -601,6 +601,7 @@ route("/machines/:id", async ({ id }) => {
         </div>
         <div class="page-actions">
           <a class="btn" href="#/deploy?machine=${id}">Deploy</a>
+          <button class="btn secondary" id="capture-machine">Capture golden image</button>
           <button class="btn danger" id="delete-machine">Delete</button>
         </div>
       </div>
@@ -633,6 +634,60 @@ route("/machines/:id", async ({ id }) => {
       toast("Machine deleted", "ok");
       location.hash = "#/machines";
     } catch (e) { toast(e.message, "err"); }
+  });
+
+  $("#capture-machine").addEventListener("click", async () => {
+    const images = await api("GET", "/api/v1/images").catch(() => []);
+    const winImages = images.filter(i => i.os_family === "windows");
+    if (!winImages.length) {
+      toast("Create a Windows image first (Images page) — capture writes a new version of it.", "err");
+      return;
+    }
+    if (!profiles.length) {
+      toast("Create a profile first — capture boots WinPE via the machine's profile.", "err");
+      return;
+    }
+    openModal({
+      title: "Capture golden image",
+      body: `
+        <p class="small muted">Sysprep the machine (<code>sysprep /generalize /oobe /shutdown</code>),
+        then boot it with a bootstrap stick and this code. WinPE captures the OS volume and uploads it
+        as a new version of the chosen image. A second local volume or USB disk is needed as WIM scratch space.</p>
+        <form id="capture-form">
+          <div class="row"><label class="full">Target image
+            <select name="image_id">
+              ${winImages.map(i => `<option value="${i.id}">${escapeHTML(i.name)} (${escapeHTML(i.os_version)})</option>`).join("")}
+            </select></label></div>
+          <div class="row"><label class="full">Boot profile (provides the WinPE boot media)
+            <select name="profile_id">
+              ${profiles.map(p => `<option value="${p.id}" ${p.id === m.DefaultProfileID ? "selected" : ""}>${escapeHTML(p.name)}</option>`).join("")}
+            </select></label></div>
+          <div class="row"><label class="full">Version tag (optional)
+            <input name="version_tag" placeholder="e.g. 24H2-golden-v3" autocomplete="off"></label></div>
+        </form>`,
+      primary: { label: "Issue capture code" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const fd = new FormData($("#capture-form", modal));
+        const resp = await api("POST", "/api/v1/deployments/issue", {
+          machine_id: id,
+          profile_id: fd.get("profile_id"),
+          kind: "capture",
+          capture_image_id: fd.get("image_id"),
+          capture_version_tag: fd.get("version_tag") || "",
+          issued_for: "capture " + (m.AssetTag || trunc(m.ID)),
+        });
+        openModal({
+          title: "Capture code issued",
+          body: `
+            <p>Boot the sysprepped machine from a bootstrap stick and enter:</p>
+            <div class="code-display" style="font-size:2em;text-align:center;letter-spacing:0.15em;"><code>${escapeHTML(resp.code)}</code></div>
+            <p class="small muted">Expires ${fmtAbsolute(resp.expires_at)}. Track progress on the Jobs page.</p>`,
+          primary: { label: "Done" },
+        });
+        return false; // keep the code modal open (we replaced it)
+      },
+    });
   });
 });
 
@@ -1670,6 +1725,128 @@ route("/images/:id", async ({ id }) => {
       toast("Image deleted", "ok");
       location.hash = "#/images";
     } catch (e) { toast(e.message, "err"); }
+  });
+});
+
+// ---------- views: Driver packs ----------
+
+route("/drivers", async () => {
+  setBreadcrumb([{label:"Driver packs"}]);
+  const packs = await api("GET", "/api/v1/driver-packs").catch(() => []);
+
+  $("#content").innerHTML = `
+    <div class="page">
+      <div class="page-title">
+        <div><h1>Driver packs</h1>
+        <p class="subtitle">Hardware-matched driver bundles injected during Windows deployment (DISM /Add-Driver).</p></div>
+        <div class="page-actions"><button class="btn" id="add-pack">+ Add driver pack</button></div>
+      </div>
+      ${packs.length ? `
+        <div class="table-wrap"><table>
+          <thead><tr>
+            <th>Vendor / Model</th><th>OS</th><th>Tag</th><th>Size</th><th>Match rules</th><th>Added</th><th></th>
+          </tr></thead>
+          <tbody>
+          ${packs.map(p => `
+            <tr class="no-hover">
+              <td><strong>${escapeHTML(p.vendor)}</strong> ${escapeHTML(p.model)}</td>
+              <td>${escapeHTML(p.os_family)} ${escapeHTML(p.os_version)}</td>
+              <td><code>${escapeHTML(p.version_tag)}</code></td>
+              <td class="mono small">${(p.size_bytes / 1048576).toFixed(1)} MiB</td>
+              <td class="small">${p.rules.map(r => `<code>${escapeHTML(r.type)}=${escapeHTML(r.value)}</code>`).join("<br>") || "—"}</td>
+              <td class="muted small">${fmtTime(p.created_at)}</td>
+              <td><button class="btn small danger" data-del="${p.version_id}">Delete</button></td>
+            </tr>`).join("")}
+          </tbody>
+        </table></div>` : `
+        <div class="card"><div class="empty">
+          <div class="empty-icon">⚙</div>
+          <div>No driver packs yet.</div>
+          <p class="small muted">Windows in-box drivers cover generic hardware; add vendor packs for anything exotic (NICs, storage, docks).</p>
+        </div></div>`}
+    </div>`;
+
+  $$("#content [data-del]").forEach(btn => btn.addEventListener("click", async () => {
+    const ok = await confirmModal({
+      title: "Delete driver pack version",
+      message: "Machines matching this pack will fall back to in-box drivers.",
+      danger: true, primaryLabel: "Delete",
+    });
+    if (!ok) return;
+    try {
+      await api("DELETE", `/api/v1/driver-packs/versions/${btn.dataset.del}`);
+      toast("Driver pack deleted", "ok");
+      navigate();
+    } catch (e) { toast(e.message, "err"); }
+  }));
+
+  $("#add-pack").addEventListener("click", () => {
+    openModal({
+      title: "Add driver pack",
+      body: `
+        <p class="small muted">A .zip of extracted (.inf-style) drivers. Match rules select this pack
+        for target hardware — one per line, <code>type=value</code>. Types:
+        <code>pci-vid-did</code> (e.g. 8086:1521), <code>dmi-product</code>, <code>dmi-baseboard</code>,
+        <code>dmi-vendor</code>, <code>os-version</code>.</p>
+        <form id="pack-form">
+          <div class="row">
+            <label>Vendor <input name="vendor" placeholder="Dell Inc." required></label>
+            <label>Model <input name="model" placeholder="Latitude 7440" required></label>
+          </div>
+          <div class="row">
+            <label>OS family
+              <select name="os_family"><option value="windows">windows</option><option value="linux">linux</option></select>
+            </label>
+            <label>OS version <input name="os_version" placeholder="11" required></label>
+            <label>Version tag <input name="version_tag" placeholder="v1"></label>
+          </div>
+          <div class="row"><label class="full">Match rules
+            <textarea name="rules" rows="4" placeholder="dmi-product=Latitude 7440&#10;pci-vid-did=8086:1521"></textarea>
+          </label></div>
+          <div class="row"><label class="full">Driver bundle (.zip)
+            <input type="file" name="file" accept=".zip" required>
+          </label></div>
+          <div class="row"><span id="pack-upload-status" class="muted small"></span></div>
+        </form>`,
+      primary: { label: "Upload + create" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const form = $("#pack-form", modal);
+        const fd = new FormData(form);
+        const file = form.querySelector('[name="file"]').files[0];
+        if (!file) throw new Error("choose a .zip file");
+        const rules = (fd.get("rules") || "").split("\n")
+          .map(l => l.trim()).filter(Boolean)
+          .map(l => {
+            const i = l.indexOf("=");
+            if (i < 1) throw new Error(`bad rule line: ${l}`);
+            return { type: l.slice(0, i).trim(), value: l.slice(i + 1).trim() };
+          });
+        if (!rules.length) throw new Error("at least one match rule required");
+
+        const status = $("#pack-upload-status", modal);
+        status.textContent = "Hashing…";
+        const sha = await sha256File(file, p => {
+          status.textContent = `Hashing… ${Math.round(p * 100)}%`;
+        });
+        status.textContent = "Registering blob…";
+        const blob = await api("POST", "/api/v1/blobs", {
+          sha256: sha, size_bytes: file.size, filename: file.name, role: "drivers",
+        });
+        status.textContent = "Uploading…";
+        const put = await fetch(blob.upload_url, { method: "PUT", body: file });
+        if (!put.ok) throw new Error("upload failed: HTTP " + put.status);
+        status.textContent = "Creating pack…";
+        await api("POST", "/api/v1/driver-packs", {
+          vendor: fd.get("vendor"), model: fd.get("model"),
+          os_family: fd.get("os_family"), os_version: fd.get("os_version"),
+          version_tag: fd.get("version_tag") || "v1",
+          blob_id: blob.blob_id, rules,
+        });
+        toast("Driver pack created", "ok");
+        navigate();
+      },
+    });
   });
 });
 

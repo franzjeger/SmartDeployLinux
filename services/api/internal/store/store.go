@@ -1514,6 +1514,169 @@ func (s *Store) ListImageVersions(ctx context.Context, imageID uuid.UUID) ([]Ima
 	return out, rows.Err()
 }
 
+// --- capture jobs ------------------------------------------------------
+
+type JobCapture struct {
+	Kind       string
+	ImageID    *uuid.UUID
+	VersionTag string
+}
+
+// GetJobCapture returns the job's kind and (for capture jobs) the target
+// image + version tag.
+func (s *Store) GetJobCapture(ctx context.Context, jobID uuid.UUID) (*JobCapture, error) {
+	jc := &JobCapture{}
+	var tag *string
+	row := s.pool.QueryRow(ctx, `
+		SELECT kind, capture_image_id, capture_version_tag
+		FROM deployment_jobs WHERE id = $1`, jobID)
+	if err := row.Scan(&jc.Kind, &jc.ImageID, &tag); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if tag != nil {
+		jc.VersionTag = *tag
+	}
+	return jc, nil
+}
+
+// GetBlobBySHA looks a blob up by its content hash.
+func (s *Store) GetBlobBySHA(ctx context.Context, sha256hex string) (*Blob, error) {
+	b := &Blob{}
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, sha256, size_bytes, s3_bucket, s3_key, created_at
+		FROM blobs WHERE sha256 = $1`, sha256hex)
+	if err := row.Scan(&b.ID, &b.SHA256, &b.SizeBytes, &b.S3Bucket, &b.S3Key, &b.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return b, nil
+}
+
+// --- driver pack management -------------------------------------------
+
+type DriverPackRow struct {
+	PackID     uuid.UUID       `json:"pack_id"`
+	Vendor     string          `json:"vendor"`
+	Model      string          `json:"model"`
+	OSFamily   string          `json:"os_family"`
+	OSVersion  string          `json:"os_version"`
+	VersionID  uuid.UUID       `json:"version_id"`
+	VersionTag string          `json:"version_tag"`
+	BlobSHA256 string          `json:"blob_sha256"`
+	SizeBytes  int64           `json:"size_bytes"`
+	Rules      []DriverRule    `json:"rules"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+type DriverRule struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+// CreateDriverPackVersion upserts the pack identity, adds a version
+// backed by the blob, and attaches its match rules — atomically.
+func (s *Store) CreateDriverPackVersion(ctx context.Context, vendor, model, osFamily, osVersion, versionTag string, blobID uuid.UUID, rules []DriverRule) (uuid.UUID, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var packID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO driver_packs (vendor, model, os_family, os_version)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (vendor, model, os_family, os_version)
+		DO UPDATE SET vendor = EXCLUDED.vendor
+		RETURNING id`, vendor, model, osFamily, osVersion).Scan(&packID); err != nil {
+		return uuid.Nil, err
+	}
+	var versionID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO driver_pack_versions (pack_id, version_tag, blob_id)
+		VALUES ($1, $2, $3)
+		RETURNING id`, packID, versionTag, blobID).Scan(&versionID); err != nil {
+		return uuid.Nil, err
+	}
+	for _, r := range rules {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO driver_match_rules (pack_version_id, match_type, match_value)
+			VALUES ($1, $2, $3)`, versionID, r.Type, r.Value); err != nil {
+			return uuid.Nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	return versionID, nil
+}
+
+// ListDriverPacks returns every pack version with its rules, newest first.
+func (s *Store) ListDriverPacks(ctx context.Context) ([]DriverPackRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT p.id, p.vendor, p.model, p.os_family, p.os_version,
+		       pv.id, pv.version_tag, b.sha256, b.size_bytes, pv.created_at,
+		       COALESCE(r.match_type, ''), COALESCE(r.match_value, '')
+		FROM driver_pack_versions pv
+		JOIN driver_packs p ON p.id = pv.pack_id
+		JOIN blobs b ON b.id = pv.blob_id
+		LEFT JOIN driver_match_rules r ON r.pack_version_id = pv.id
+		ORDER BY pv.created_at DESC, pv.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byVersion := map[uuid.UUID]*DriverPackRow{}
+	var order []uuid.UUID
+	for rows.Next() {
+		var row DriverPackRow
+		var rType, rValue string
+		if err := rows.Scan(&row.PackID, &row.Vendor, &row.Model, &row.OSFamily,
+			&row.OSVersion, &row.VersionID, &row.VersionTag, &row.BlobSHA256,
+			&row.SizeBytes, &row.CreatedAt, &rType, &rValue); err != nil {
+			return nil, err
+		}
+		existing, ok := byVersion[row.VersionID]
+		if !ok {
+			row.Rules = []DriverRule{}
+			byVersion[row.VersionID] = &row
+			order = append(order, row.VersionID)
+			existing = &row
+		}
+		if rType != "" {
+			existing.Rules = append(existing.Rules, DriverRule{Type: rType, Value: rValue})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]DriverPackRow, 0, len(order))
+	for _, id := range order {
+		out = append(out, *byVersion[id])
+	}
+	return out, nil
+}
+
+// DeleteDriverPackVersion removes a version (rules cascade). The pack
+// row is left even if empty — it's identity, not payload.
+func (s *Store) DeleteDriverPackVersion(ctx context.Context, versionID uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM driver_pack_versions WHERE id = $1`, versionID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- errors ----------------------------------------------------------
 
 var (

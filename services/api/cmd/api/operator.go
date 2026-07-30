@@ -40,6 +40,12 @@ type issueReq struct {
 	TTLSeconds  int    `json:"ttl_seconds,omitempty"`
 	IssuedFor   string `json:"issued_for,omitempty"`
 	BindingCIDR string `json:"binding_cidr,omitempty"`
+
+	// kind "capture": boot the machine into WinPE and capture its
+	// sysprepped OS volume as a new version of capture_image_id.
+	Kind              string `json:"kind,omitempty"`
+	CaptureImageID    string `json:"capture_image_id,omitempty"`
+	CaptureVersionTag string `json:"capture_version_tag,omitempty"`
 }
 
 func (h *handlers) issueDeployment(w http.ResponseWriter, r *http.Request) {
@@ -70,14 +76,29 @@ func (h *handlers) issueDeployment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "machine_id and profile_id required", http.StatusBadRequest)
 		return
 	}
+	if req.Kind == "capture" {
+		// Capturing writes a new image version — require image.write on
+		// top of deployment.create.
+		if !auth.HasPerm(r.Context(), "image.write") {
+			http.Error(w, "forbidden: capture requires image.write", http.StatusForbidden)
+			return
+		}
+		if req.CaptureImageID == "" {
+			http.Error(w, "capture_image_id required for capture", http.StatusBadRequest)
+			return
+		}
+	}
 
 	// Forward to broker. Inject issued_by server-side.
 	body := map[string]any{
-		"machine_id":   req.MachineID,
-		"profile_id":   req.ProfileID,
-		"ttl_seconds":  req.TTLSeconds,
-		"issued_for":   req.IssuedFor,
-		"binding_cidr": req.BindingCIDR,
+		"machine_id":          req.MachineID,
+		"profile_id":          req.ProfileID,
+		"ttl_seconds":         req.TTLSeconds,
+		"issued_for":          req.IssuedFor,
+		"binding_cidr":        req.BindingCIDR,
+		"kind":                req.Kind,
+		"capture_image_id":    req.CaptureImageID,
+		"capture_version_tag": req.CaptureVersionTag,
 		"issued_by":    uid.String(),
 	}
 	bs, _ := json.Marshal(body)

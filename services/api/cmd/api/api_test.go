@@ -95,3 +95,33 @@ func TestDeployCmdMatchesCanonical(t *testing.T) {
 		t.Fatal("services/api/cmd/api/deploy.cmd out of sync with winpe/scripts/deploy.cmd")
 	}
 }
+
+func TestCaptureCmdMatchesCanonical(t *testing.T) {
+	if len(captureCmdBody) < 1000 {
+		t.Fatalf("capture.cmd looks like a stub (%d bytes)", len(captureCmdBody))
+	}
+	for _, want := range []string{
+		"capture-upload", "capture-complete", "Capture-Image",
+		"Authorization: Bearer",
+	} {
+		if !strings.Contains(captureCmdBody, want) {
+			t.Fatalf("capture.cmd missing %q", want)
+		}
+	}
+	if strings.Contains(captureCmdBody, "?token=") {
+		t.Fatal("capture.cmd must not use query-string tokens")
+	}
+	canonical, err := os.ReadFile("../../../../winpe/scripts/capture.cmd")
+	if err != nil {
+		t.Skipf("canonical capture.cmd not present: %v", err)
+	}
+	if string(canonical) != captureCmdBody {
+		t.Fatal("services/api/cmd/api/capture.cmd out of sync with winpe/scripts/capture.cmd")
+	}
+}
+
+func TestLowerHex(t *testing.T) {
+	if got := lowerHex("AB12cdEF"); got != "ab12cdef" {
+		t.Fatalf("lowerHex = %q", got)
+	}
+}

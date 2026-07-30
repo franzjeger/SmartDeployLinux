@@ -66,13 +66,22 @@ func (h *handlers) authJobToken(w http.ResponseWriter, r *http.Request) (machine
 }
 
 // GET /v1/jobs/{id}/deploy.cmd
+//
+// Serves deploy.cmd for deploy jobs and capture.cmd for capture jobs —
+// startnet.cmd always fetches this one URL, so the same boot.wim works
+// for both flows and the server decides what the machine runs.
 func (h *handlers) winpeDeployCmd(w http.ResponseWriter, r *http.Request) {
-	if _, _, _, ok := h.authJobToken(w, r); !ok {
+	_, _, jobID, ok := h.authJobToken(w, r)
+	if !ok {
 		return
+	}
+	body := deployCmdBody
+	if jc, err := h.store.GetJobCapture(r.Context(), jobID); err == nil && jc.Kind == "capture" {
+		body = captureCmdBody
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=us-ascii")
 	w.Header().Set("Content-Disposition", `attachment; filename="deploy.cmd"`)
-	fmt.Fprint(w, deployCmdBody)
+	fmt.Fprint(w, body)
 }
 
 // POST /v1/jobs/{id}/plan

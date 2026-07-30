@@ -309,6 +309,58 @@ libraries. All verified by unit + Postgres-backed integration tests.
 - JS SHA-256 validated against node crypto across block-boundary sizes
   and chunked input (build-time check, not committed as a test runner).
 
+## Phase 14 — Golden-image capture, driver-pack ingest, deployctl upload
+
+**Done.** The SmartDeploy-core capture workflow plus the remaining
+ingest surfaces.
+
+### Golden-image capture (WinPE)
+
+- Migration `0005`: `kind` (`deploy`/`capture`) + capture target columns
+  on `auth_codes` and `deployment_jobs`. Intent is set at code issuance
+  and copied onto the job at redeem (broker `INSERT…SELECT`), so the
+  stick/redeem/boot path is unchanged.
+- `winpe/scripts/capture.cmd` (embedded + sync-tested like deploy.cmd):
+  finds the offline sysprepped Windows volume, captures it with
+  `DISM /Capture-Image /Compress:max`, hashes with certutil, registers
+  the blob via `POST /v1/jobs/{id}/capture-upload` (presigned PUT, 6h),
+  uploads with curl, finalizes via `POST /v1/jobs/{id}/capture-complete`
+  — which links the blob as a new version of the target image and
+  completes the job. Same bearer-token gating as deploy; a deploy token
+  cannot reach the capture endpoints (kind check).
+- `GET /v1/jobs/{id}/deploy.cmd` now serves capture.cmd for capture
+  jobs — one boot.wim, server decides the script.
+- Issue path: `POST /api/v1/deployments/issue` accepts
+  `kind=capture` + `capture_image_id` + `capture_version_tag`
+  (requires `image.write` on top of `deployment.create`).
+- UI: "Capture golden image" on the machine page — pick target image,
+  boot profile, version tag → 6-char capture code, tracked like any job.
+
+### Driver-pack ingest
+
+- `store.CreateDriverPackVersion` (atomic pack-upsert + version +
+  rules), `ListDriverPacks`, `DeleteDriverPackVersion`.
+- `GET/POST /api/v1/driver-packs`, `DELETE
+  /api/v1/driver-packs/versions/{id}`; rule types validated; requires
+  ≥1 match rule.
+- UI: new **Driver packs** page — list with rules, delete, and an
+  add-pack modal that hashes + uploads the .zip via the blob flow and
+  binds match rules. Packs are matched by `/plan` immediately.
+
+### deployctl
+
+- `deployctl images list` and `deployctl images upload --image <id>
+  --file install.wim [--tag v]`: streaming SHA-256, presigned PUT with
+  no client timeout, version linking. The headless twin of the UI panel.
+
+### Tests
+
+- capture.cmd embed sync + content assertions, lowerHex (2).
+- Store integration: capture kind/target roundtrip, driver-pack CRUD +
+  matcher pickup + pack-identity dedup (2).
+- Broker capture-copy `INSERT…SELECT` validated against the live
+  Postgres 16 schema.
+
 ## Phase 11 — Final docs
 **Done.**
 

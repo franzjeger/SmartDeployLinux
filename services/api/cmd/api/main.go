@@ -234,6 +234,8 @@ func serve() {
 		r.Get("/image.wim", h.winpeImage)
 		r.Get("/drivers.zip", h.winpeDrivers)
 		r.Get("/unattend.xml", h.winpeUnattend)
+		r.Post("/capture-upload", h.captureUpload)
+		r.Post("/capture-complete", h.captureComplete)
 	})
 
 	// Operator API (OIDC-authenticated).
@@ -261,6 +263,9 @@ func serve() {
 		r.Patch("/images/{id}", h.updateImage)
 		r.Delete("/images/{id}", h.deleteImage)
 		r.Post("/blobs", h.createBlob)
+		r.Get("/driver-packs", h.listDriverPacks)
+		r.Post("/driver-packs", h.createDriverPack)
+		r.Delete("/driver-packs/versions/{id}", h.deleteDriverPackVersion)
 		r.Post("/images/{id}/versions", h.createImageVersion)
 		r.Get("/images/{id}/versions", h.listImageVersions)
 		r.Get("/catalog", h.listCatalog)
