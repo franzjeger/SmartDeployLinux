@@ -601,6 +601,7 @@ route("/machines/:id", async ({ id }) => {
         </div>
         <div class="page-actions">
           <a class="btn" href="#/deploy?machine=${id}">Deploy</a>
+          <button class="btn secondary" id="wake-machine">Wake</button>
           <button class="btn secondary" id="capture-machine">Capture golden image</button>
           <button class="btn danger" id="delete-machine">Delete</button>
         </div>
@@ -634,6 +635,36 @@ route("/machines/:id", async ({ id }) => {
       toast("Machine deleted", "ok");
       location.hash = "#/machines";
     } catch (e) { toast(e.message, "err"); }
+  });
+
+  $("#wake-machine").addEventListener("click", () => {
+    if (!m.MACPrimary) {
+      toast("Machine has no primary MAC — wake-on-LAN needs one.", "err");
+      return;
+    }
+    openModal({
+      title: "Wake machine",
+      body: `
+        <p class="small muted">Queues a wake-on-LAN request. The edge agent at the machine's site
+        drains the queue and broadcasts the magic packet on its LAN. The machine's site comes from
+        its <code>site</code> attribute (or "default").</p>
+        <form id="wake-form">
+          <div class="row"><label class="full">Wake at (optional — leave empty for "next agent poll")
+            <input type="datetime-local" name="at"></label></div>
+          <div class="row"><label class="full">Site override (optional)
+            <input name="site" placeholder="e.g. oslo-branch" autocomplete="off"></label></div>
+        </form>`,
+      primary: { label: "Queue wake" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const fd = new FormData($("#wake-form", modal));
+        const body = {};
+        if (fd.get("at")) body.at = new Date(fd.get("at")).toISOString();
+        if (fd.get("site")) body.site = fd.get("site");
+        const resp = await api("POST", `/api/v1/machines/${id}/wake`, body);
+        toast(`Wake queued for site "${resp.site}"`, "ok");
+      },
+    });
   });
 
   $("#capture-machine").addEventListener("click", async () => {

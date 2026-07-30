@@ -203,6 +203,11 @@ func serve() {
 	// code+PKCE flow. Public values only.
 	pub.Get("/api/v1/auth/config", h.authConfig)
 
+	// Edge-agent wake queue. Shared-secret bearer (EDGE_WAKE_TOKEN);
+	// fails closed when unconfigured.
+	pub.With(middleware.Timeout(15 * time.Second)).
+		Get("/v1/edge/wake-queue", h.edgeWakeQueue)
+
 	// Phone-home from in-OS installers (cross-WAN; bearer-token auth).
 	pub.Route("/v1/jobs/{id}/events", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
@@ -251,6 +256,8 @@ func serve() {
 		r.Post("/machines", h.createMachine)
 		r.Get("/machines/{id}", h.getMachine)
 		r.Delete("/machines/{id}", h.deleteMachine)
+		r.Post("/machines/{id}/wake", h.wakeMachine)
+		r.Get("/machines/{id}/wake", h.listWakes)
 		r.Get("/profiles", h.listProfiles)
 		r.Post("/profiles", h.createProfile)
 		r.Get("/profiles/{id}", h.getProfile)

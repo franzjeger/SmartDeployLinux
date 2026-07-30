@@ -1677,6 +1677,115 @@ func (s *Store) DeleteDriverPackVersion(ctx context.Context, versionID uuid.UUID
 	return nil
 }
 
+// --- wake-on-LAN ------------------------------------------------------
+
+type WakeRequest struct {
+	ID          uuid.UUID  `json:"id"`
+	MachineID   uuid.UUID  `json:"machine_id"`
+	MAC         string     `json:"mac"`
+	Site        string     `json:"site"`
+	ScheduledAt time.Time  `json:"scheduled_at"`
+	ClaimedAt   *time.Time `json:"claimed_at"`
+	ClaimedBy   *string    `json:"claimed_by"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// CreateWakeRequest queues a wake for the machine. scheduledAt zero
+// means "as soon as an agent polls".
+func (s *Store) CreateWakeRequest(ctx context.Context, machineID uuid.UUID, mac, site string, scheduledAt time.Time, requestedBy *uuid.UUID) (uuid.UUID, error) {
+	if site == "" {
+		site = "default"
+	}
+	if scheduledAt.IsZero() {
+		scheduledAt = time.Now().UTC()
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO wake_requests (machine_id, mac, site, scheduled_at, requested_by)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id`, machineID, mac, site, scheduledAt, requestedBy).Scan(&id)
+	return id, err
+}
+
+// ClaimDueWakeRequests atomically claims every unclaimed request for the
+// site whose schedule has arrived, and returns them. Each request is
+// delivered to exactly one agent (the UPDATE is the claim), so two
+// agents polling the same site don't double-wake — though WoL itself is
+// idempotent, duplicate storms across large sites are not free.
+func (s *Store) ClaimDueWakeRequests(ctx context.Context, site, agent string, limit int) ([]WakeRequest, error) {
+	if site == "" {
+		site = "default"
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		UPDATE wake_requests w
+		SET claimed_at = now(), claimed_by = $2
+		FROM (
+			SELECT id FROM wake_requests
+			WHERE site = $1 AND claimed_at IS NULL AND scheduled_at <= now()
+			ORDER BY scheduled_at
+			LIMIT $3
+			FOR UPDATE SKIP LOCKED
+		) due
+		WHERE w.id = due.id
+		RETURNING w.id, w.machine_id, w.mac::text, w.site, w.scheduled_at,
+		          w.claimed_at, w.claimed_by, w.created_at`,
+		site, agent, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WakeRequest
+	for rows.Next() {
+		var w WakeRequest
+		if err := rows.Scan(&w.ID, &w.MachineID, &w.MAC, &w.Site,
+			&w.ScheduledAt, &w.ClaimedAt, &w.ClaimedBy, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// ListWakeRequests returns a machine's wake history, newest first.
+func (s *Store) ListWakeRequests(ctx context.Context, machineID uuid.UUID, limit int) ([]WakeRequest, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, machine_id, mac::text, site, scheduled_at, claimed_at, claimed_by, created_at
+		FROM wake_requests WHERE machine_id = $1
+		ORDER BY created_at DESC LIMIT $2`, machineID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WakeRequest
+	for rows.Next() {
+		var w WakeRequest
+		if err := rows.Scan(&w.ID, &w.MachineID, &w.MAC, &w.Site,
+			&w.ScheduledAt, &w.ClaimedAt, &w.ClaimedBy, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// ReapWakeRequests deletes claimed requests older than `older`.
+func (s *Store) ReapWakeRequests(ctx context.Context, older time.Duration) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM wake_requests
+		WHERE claimed_at IS NOT NULL AND claimed_at < now() - $1::interval`,
+		older.String())
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // --- errors ----------------------------------------------------------
 
 var (

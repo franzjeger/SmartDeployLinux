@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -280,6 +281,54 @@ func TestDriverPackVersionCRUD(t *testing.T) {
 	must(t, st.DeleteDriverPackVersion(ctx, vID))
 	if err := st.DeleteDriverPackVersion(ctx, vID); err != ErrNotFound {
 		t.Fatalf("second delete: %v", err)
+	}
+}
+
+func TestWakeRequestQueue(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	tag := "lab-wake"
+	mac := "aa:bb:cc:00:11:22"
+	m, err := st.CreateMachine(ctx, CreateMachineInput{AssetTag: &tag, MACPrimary: &mac})
+	must(t, err)
+
+	// One due now, one scheduled in the future, one for another site.
+	_, err = st.CreateWakeRequest(ctx, m.ID, mac, "oslo", time.Time{}, nil)
+	must(t, err)
+	_, err = st.CreateWakeRequest(ctx, m.ID, mac, "oslo", time.Now().Add(time.Hour), nil)
+	must(t, err)
+	_, err = st.CreateWakeRequest(ctx, m.ID, mac, "bergen", time.Time{}, nil)
+	must(t, err)
+
+	claimed, err := st.ClaimDueWakeRequests(ctx, "oslo", "edge-1", 50)
+	must(t, err)
+	if len(claimed) != 1 {
+		t.Fatalf("claimed %d for oslo, want 1 (future + other-site excluded)", len(claimed))
+	}
+	if claimed[0].MAC != mac || claimed[0].ClaimedBy == nil || *claimed[0].ClaimedBy != "edge-1" {
+		t.Fatalf("claim row wrong: %+v", claimed[0])
+	}
+
+	// A second poll gets nothing — the claim is one-shot.
+	again, err := st.ClaimDueWakeRequests(ctx, "oslo", "edge-2", 50)
+	must(t, err)
+	if len(again) != 0 {
+		t.Fatalf("double-claimed: %+v", again)
+	}
+
+	// History shows all three.
+	hist, err := st.ListWakeRequests(ctx, m.ID, 20)
+	must(t, err)
+	if len(hist) != 3 {
+		t.Fatalf("history %d rows, want 3", len(hist))
+	}
+
+	// Reap removes only old claimed rows; nothing here is old enough.
+	n, err := st.ReapWakeRequests(ctx, time.Hour)
+	must(t, err)
+	if n != 0 {
+		t.Fatalf("reaped %d fresh rows", n)
 	}
 }
 

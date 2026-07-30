@@ -71,6 +71,23 @@ func runOnce(ctx context.Context, pool *pgxpool.Pool) {
 	} else if n > 0 {
 		slog.Info("reaped one_shot_tokens", "count", n)
 	}
+	if n, err := reapWakeRequests(ctx, pool, 7*24*time.Hour); err != nil {
+		slog.Error("reap wake_requests", "err", err)
+	} else if n > 0 {
+		slog.Info("reaped wake_requests", "count", n)
+	}
+}
+
+// reapWakeRequests deletes claimed wake requests older than `older`.
+func reapWakeRequests(ctx context.Context, pool *pgxpool.Pool, older time.Duration) (int64, error) {
+	tag, err := pool.Exec(ctx, `
+		DELETE FROM wake_requests
+		WHERE claimed_at IS NOT NULL AND claimed_at < now() - $1::interval`,
+		fmt.Sprintf("%d seconds", int(older.Seconds())))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // reapOneShotTokens deletes boot/phone-home tokens that were consumed or

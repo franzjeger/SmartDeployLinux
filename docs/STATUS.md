@@ -400,6 +400,34 @@ router was mounted at `/internal` while its routes already carried the
 `/internal/internal/...`. The mTLS listener masked it. Routes are now
 prefix-relative and mounted consistently on both listeners.
 
+## Phase 16 — Wake-on-LAN scheduling via the edge agent
+
+**Done.** The API can't reach remote L2 segments, so wakes are queued
+centrally and broadcast by the edge agent that fronts the machine's LAN.
+
+- Migration `0006`: `wake_requests` (machine, MAC snapshot, site,
+  schedule, one-shot claim columns; partial index on due rows).
+- Store: `CreateWakeRequest`, `ClaimDueWakeRequests` (atomic
+  `UPDATE … FOR UPDATE SKIP LOCKED` — each request delivered to exactly
+  one agent), `ListWakeRequests`, `ReapWakeRequests` (worker reaps
+  claimed rows >7 days).
+- API: `POST /api/v1/machines/{id}/wake` (`{at?, site?}`; site defaults
+  to the machine's `attributes.site`; requires a primary MAC),
+  `GET …/wake` history, and the edge drain
+  `GET /v1/edge/wake-queue?site=&agent=` — shared-secret bearer
+  (`EDGE_WAKE_TOKEN`), constant-time compare, **fails closed** when
+  unconfigured (no dev-mode escape for an outward-facing action).
+- Edge agent: WoL poller goroutine alongside dnsmasq (15s interval,
+  no-op without `EDGE_WAKE_TOKEN`); magic-packet builder (6×0xFF +
+  16×MAC), 3-packet burst to UDP :9 on `LAN_BROADCAST` or the limited
+  broadcast. First tests in the edge-agent module.
+- UI: Wake button on the machine page with optional schedule time and
+  site override.
+- Tests: magic-packet unit tests (2), wake-queue store integration test
+  (due/future/site filtering, one-shot claim, history, reap), and an
+  e2e test covering operator-queue → edge-drain → double-drain-empty →
+  bad-token-404.
+
 ## Phase 11 — Final docs
 **Done.**
 

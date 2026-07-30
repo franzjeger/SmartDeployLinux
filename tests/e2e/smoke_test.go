@@ -38,6 +38,7 @@ import (
 )
 
 const deployFQDN = "deploy.e2e.test"
+const edgeWakeToken = "e2e-edge-wake-token"
 
 // hashBootToken mirrors the broker/api scheme: sha256(pepper || 0x00 || token).
 func hashBootToken(token, pepper string) string {
@@ -100,6 +101,7 @@ func startAPI(t *testing.T) *harness {
 		"LOG_LEVEL=warn",
 		// Force dev-mode paths: no OIDC, no internal mTLS certs.
 		"OIDC_ISSUER=", "OIDC_CLIENT_ID=", "INTERNAL_TLS_CERT=/nonexistent",
+		"EDGE_WAKE_TOKEN="+edgeWakeToken,
 	)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -375,5 +377,50 @@ func TestCaptureJobUserData(t *testing.T) {
 	status, _ = h.call("GET", "/v1/jobs/"+jobID+"/capture.sh", "", nil)
 	if status == 200 {
 		t.Fatal("capture.sh served without a token")
+	}
+}
+
+func TestWakeOnLANQueue(t *testing.T) {
+	h := startAPI(t)
+	suffix := randHex(4)
+
+	status, m := h.call("POST", "/api/v1/machines", "", map[string]any{
+		"asset_tag":   "e2e-wake-" + suffix,
+		"mac_primary": "02:e2:e2:00:11:22",
+		"attributes":  map[string]any{"site": "e2e-site-" + suffix},
+	})
+	h.must(status, 201, m, "create machine")
+	machineID, _ := m["ID"].(string)
+
+	// Operator queues a wake; site resolved from the machine attribute.
+	status, wake := h.call("POST", "/api/v1/machines/"+machineID+"/wake", "", nil)
+	h.must(status, 202, wake, "queue wake")
+	if wake["site"] != "e2e-site-"+suffix {
+		t.Fatalf("site not resolved from attributes: %v", wake["site"])
+	}
+
+	// Edge agent drains its site's queue with the shared token.
+	status, q := h.call("GET",
+		"/v1/edge/wake-queue?site=e2e-site-"+suffix+"&agent=e2e-edge", edgeWakeToken, nil)
+	h.must(status, 200, q, "edge queue drain")
+	wakes, _ := q["wakes"].([]any)
+	if len(wakes) != 1 {
+		t.Fatalf("drained %d wakes, want 1: %v", len(wakes), q)
+	}
+	first, _ := wakes[0].(map[string]any)
+	if first["mac"] != "02:e2:e2:00:11:22" {
+		t.Fatalf("wrong mac in queue: %v", first)
+	}
+
+	// Second drain is empty (one-shot claim); wrong token is a 404.
+	status, q = h.call("GET",
+		"/v1/edge/wake-queue?site=e2e-site-"+suffix, edgeWakeToken, nil)
+	h.must(status, 200, q, "second drain")
+	if wakes, _ := q["wakes"].([]any); len(wakes) != 0 {
+		t.Fatalf("double delivery: %v", wakes)
+	}
+	status, _ = h.call("GET", "/v1/edge/wake-queue", "wrong-token", nil)
+	if status != 404 {
+		t.Fatalf("bad token: got %d, want 404", status)
 	}
 }
