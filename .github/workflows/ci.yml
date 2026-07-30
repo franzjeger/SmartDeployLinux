@@ -27,6 +27,11 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     strategy:
+      # The runner pool provisions a limited number of parallel jobs and
+      # hard-fails the overflow instead of queueing (observed: instant
+      # failures with runner_id 0 and no steps executed). Keep the
+      # concurrent footprint small.
+      max-parallel: 3
       matrix:
         service:
           - auth-broker
@@ -66,6 +71,7 @@ jobs:
 
   e2e:
     name: deploy-spine e2e smoke
+    needs: go
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -95,6 +101,7 @@ jobs:
 
   shell:
     name: shellcheck
+    needs: go
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -121,6 +128,7 @@ jobs:
 
   sql:
     name: migration applies
+    needs: go
     runs-on: ubuntu-latest
     services:
       postgres:
