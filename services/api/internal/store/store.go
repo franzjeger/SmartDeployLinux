@@ -1828,6 +1828,83 @@ func (s *Store) ReapWakeRequests(ctx context.Context, older time.Duration) (int6
 	return tag.RowsAffected(), nil
 }
 
+// --- sites ------------------------------------------------------------
+
+type Site struct {
+	Name          string    `json:"name"`
+	MirrorBaseURL *string   `json:"mirror_base_url"`
+	Description   *string   `json:"description"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+func (s *Store) UpsertSite(ctx context.Context, name string, mirrorBaseURL, description *string) (*Site, error) {
+	site := &Site{}
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO sites (name, mirror_base_url, description)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (name) DO UPDATE
+		   SET mirror_base_url = EXCLUDED.mirror_base_url,
+		       description     = EXCLUDED.description
+		RETURNING name, mirror_base_url, description, created_at`,
+		name, mirrorBaseURL, description).
+		Scan(&site.Name, &site.MirrorBaseURL, &site.Description, &site.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return site, nil
+}
+
+func (s *Store) ListSites(ctx context.Context) ([]Site, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT name, mirror_base_url, description, created_at
+		FROM sites ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Site
+	for rows.Next() {
+		var site Site
+		if err := rows.Scan(&site.Name, &site.MirrorBaseURL, &site.Description, &site.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, site)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteSite(ctx context.Context, name string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM sites WHERE name = $1`, name)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SiteMirror returns the mirror base URL for a site name, or "" when
+// the site is unknown or has no mirror configured.
+func (s *Store) SiteMirror(ctx context.Context, name string) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	var mirror *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT mirror_base_url FROM sites WHERE name = $1`, name).Scan(&mirror)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if mirror == nil {
+		return "", nil
+	}
+	return *mirror, nil
+}
+
 // --- errors ----------------------------------------------------------
 
 var (

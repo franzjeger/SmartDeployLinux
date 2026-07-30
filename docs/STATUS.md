@@ -448,6 +448,40 @@ centrally and broadcast by the edge agent that fronts the machine's LAN.
   integration test for partial update / attribute replacement /
   profile clearing.
 
+## Phase 18 — Site-local image distribution (multicast-class)
+
+**Done.** One WAN image transfer per site, N LAN deliveries.
+
+**Design decision:** true UDP multicast (WDS-style) needs a reliable
+multicast protocol plus custom receivers inside WinPE/installer
+environments — fragile across switches/firmware and unverifiable here.
+The edge box already fronts each remote LAN, so the same goal is met
+with a verifying, caching HTTP mirror: the WAN leg happens once, the
+LAN leg is unicast HTTP that every client already speaks and modern
+switch fabrics handle at line rate. True multicast on the LAN leg
+(uftp) can slot behind the same mirror later without touching the API.
+
+- Migration `0007`: `sites` (name, mirror_base_url, description).
+- Store: `UpsertSite` / `ListSites` / `DeleteSite` / `SiteMirror`.
+- API: `GET/PUT /api/v1/sites`, `DELETE /api/v1/sites/{name}`
+  (URL-validated); render pipeline (`bundleToRespForSite`) rewrites
+  `/static/*` and `/blobs/*` media URLs to the machine's site mirror —
+  applied on the iPXE render, WinPE `image.wim` redirect, `/plan`
+  driver-pack URLs, and `drivers.zip`. Third-party URLs pass through.
+- Edge agent: `EDGE_CACHE_LISTEN` starts the mirror
+  (`EDGE_CACHE_DIR`, `EDGE_CACHE_MAX_BYTES`, default 50 GiB):
+  fill-once semantics (concurrent PXE storm → one upstream fetch),
+  byte-range serving from cache, **sha256 verification of
+  content-addressed /blobs objects during fill** (tampered or corrupted
+  WAN transfers are never served), path-escape rejection, oldest-first
+  eviction under the size cap.
+- UI: Sites page (list / add / edit / delete with mirror URL).
+- Tests: 5 cache tests (fill-once under 20 concurrent clients, ranges,
+  sha verification incl. tamper rejection, path escape, eviction),
+  mirrorRewrite units, sites store integration, and an e2e test proving
+  a machine homed to a mirrored site renders mirrored URLs while
+  third-party URLs pass through.
+
 ## Phase 11 — Final docs
 **Done.**
 

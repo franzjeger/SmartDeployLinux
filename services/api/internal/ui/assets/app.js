@@ -1960,6 +1960,92 @@ route("/drivers", async () => {
   });
 });
 
+// ---------- views: Sites ----------
+
+route("/sites", async () => {
+  setBreadcrumb([{label:"Sites"}]);
+  const sites = await api("GET", "/api/v1/sites").catch(() => []);
+
+  $("#content").innerHTML = `
+    <div class="page">
+      <div class="page-title">
+        <div><h1>Sites</h1>
+        <p class="subtitle">Locations with edge boxes. A site with an image mirror pulls each image
+        over the WAN once — machines there fetch from the local cache.</p></div>
+        <div class="page-actions"><button class="btn" id="add-site">+ Add site</button></div>
+      </div>
+      ${sites.length ? `
+        <div class="table-wrap"><table>
+          <thead><tr><th>Name</th><th>Image mirror</th><th>Description</th><th>Created</th><th></th></tr></thead>
+          <tbody>
+          ${sites.map(s => `
+            <tr class="no-hover">
+              <td><strong>${escapeHTML(s.name)}</strong></td>
+              <td class="mono small">${escapeHTML(s.mirror_base_url || "—")}</td>
+              <td class="muted small">${escapeHTML(s.description || "")}</td>
+              <td class="muted small">${fmtTime(s.created_at)}</td>
+              <td>
+                <button class="btn small secondary" data-edit="${escapeHTML(s.name)}">Edit</button>
+                <button class="btn small danger" data-del="${escapeHTML(s.name)}">Delete</button>
+              </td>
+            </tr>`).join("")}
+          </tbody>
+        </table></div>` : `
+        <div class="card"><div class="empty">
+          <div class="empty-icon">⌖</div>
+          <div>No sites yet.</div>
+          <p class="small muted">Set a machine's <code>site</code> attribute to group it under a site.
+          Configure the edge box with <code>EDGE_CACHE_LISTEN=:8090</code> and register its LAN address
+          here as the mirror.</p>
+        </div></div>`}
+    </div>`;
+
+  const siteModal = existing => openModal({
+    title: existing ? "Edit site" : "Add site",
+    body: `
+      <form id="site-form">
+        <div class="row"><label class="full">Name
+          <input name="name" value="${escapeHTML(existing ? existing.name : "")}"
+                 ${existing ? "readonly" : ""} placeholder="oslo-branch" required></label></div>
+        <div class="row"><label class="full">Image mirror base URL (the edge box's cache; empty = no mirror)
+          <input name="mirror_base_url" value="${escapeHTML((existing && existing.mirror_base_url) || "")}"
+                 placeholder="http://192.168.10.2:8090"></label></div>
+        <div class="row"><label class="full">Description
+          <input name="description" value="${escapeHTML((existing && existing.description) || "")}"></label></div>
+      </form>`,
+    primary: { label: "Save" },
+    secondary: "Cancel",
+    onPrimary: async modal => {
+      const fd = new FormData($("#site-form", modal));
+      await api("PUT", "/api/v1/sites", {
+        name: fd.get("name"),
+        mirror_base_url: fd.get("mirror_base_url") || null,
+        description: fd.get("description") || null,
+      });
+      toast("Site saved", "ok");
+      navigate();
+    },
+  });
+
+  $("#add-site").addEventListener("click", () => siteModal(null));
+  $$("#content [data-edit]").forEach(btn => btn.addEventListener("click", () => {
+    siteModal(sites.find(s => s.name === btn.dataset.edit));
+  }));
+  $$("#content [data-del]").forEach(btn => btn.addEventListener("click", async () => {
+    const ok = await confirmModal({
+      title: "Delete site",
+      message: `Machines at "${btn.dataset.del}" fall back to fetching images over the WAN.`,
+      danger: true, primaryLabel: "Delete",
+    });
+    if (!ok) return;
+    try {
+      await api("DELETE", `/api/v1/sites/${encodeURIComponent(btn.dataset.del)}`);
+      toast("Site deleted", "ok");
+      navigate();
+    } catch (e) { toast(e.message, "err"); }
+  }));
+});
+
 // ---------- views: Sticks ----------
 
 route("/sticks", async () => {

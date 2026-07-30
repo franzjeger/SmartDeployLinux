@@ -4,12 +4,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"text/template"
 	"time"
 
@@ -55,6 +58,45 @@ type renderResp struct {
 	} `json:"image"`
 	OneShotToken string `json:"one_shot_token,omitempty"`
 	JobID        string `json:"job_id,omitempty"`
+}
+
+// machineSite reads the machine's site attribute ("" when unset).
+func machineSite(m *store.Machine) string {
+	if len(m.Attributes) == 0 {
+		return ""
+	}
+	var attrs struct {
+		Site string `json:"site"`
+	}
+	_ = json.Unmarshal(m.Attributes, &attrs)
+	return attrs.Site
+}
+
+// mirrorRewrite points a media URL at a site's local mirror when the
+// URL is served by this deploy server's blob paths (/static, /blobs).
+// Third-party URLs (public distro mirrors etc.) pass through untouched.
+func mirrorRewrite(mirror, deployFQDN, rawURL string) string {
+	if mirror == "" || rawURL == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host != deployFQDN {
+		return rawURL
+	}
+	if !strings.HasPrefix(u.Path, "/static/") && !strings.HasPrefix(u.Path, "/blobs/") {
+		return rawURL
+	}
+	return strings.TrimRight(mirror, "/") + u.Path
+}
+
+// siteMirrorFor resolves the machine's site to its mirror base URL.
+// Best-effort: on lookup failure the machine just fetches from origin.
+func (h *handlers) siteMirrorFor(ctx context.Context, m *store.Machine) string {
+	mirror, err := h.store.SiteMirror(ctx, machineSite(m))
+	if err != nil {
+		return ""
+	}
+	return mirror
 }
 
 func (h *handlers) bundleToResp(b *store.RenderBundle) renderResp {
@@ -109,6 +151,25 @@ func (h *handlers) bundleToResp(b *store.RenderBundle) renderResp {
 	return r
 }
 
+// bundleToRespForSite is bundleToResp plus media-URL rewriting to the
+// machine's site mirror (the edge box's caching blob proxy), when one
+// is configured. This is what turns a 40-machine site into one WAN
+// image transfer instead of forty.
+func (h *handlers) bundleToRespForSite(ctx context.Context, b *store.RenderBundle) renderResp {
+	r := h.bundleToResp(b)
+	mirror := h.siteMirrorFor(ctx, &b.Machine)
+	if mirror == "" {
+		return r
+	}
+	for _, p := range []*string{
+		&r.Image.KernelURL, &r.Image.InitrdURL,
+		&r.Image.WimbootURL, &r.Image.BootWimURL, &r.Image.WimURL,
+	} {
+		*p = mirrorRewrite(mirror, h.deployFQDN, *p)
+	}
+	return r
+}
+
 func nonEmpty(a, b string) string { if a != "" { return a }; return b }
 
 func (h *handlers) renderMachineByID(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +191,7 @@ func (h *handlers) renderMachineByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.bundleToResp(bundle))
+	writeJSON(w, http.StatusOK, h.bundleToRespForSite(r.Context(), bundle))
 }
 
 func (h *handlers) renderMachineByMAC(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +206,7 @@ func (h *handlers) renderMachineByMAC(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no active profile", http.StatusConflict)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.bundleToResp(bundle))
+	writeJSON(w, http.StatusOK, h.bundleToRespForSite(r.Context(), bundle))
 }
 
 // renderByToken is the path the bootstrap stick (and any LAN PXE chainload
@@ -172,7 +233,7 @@ func (h *handlers) renderByToken(w http.ResponseWriter, r *http.Request) {
 	if bundle.JobID != nil {
 		_ = h.store.AdvanceJob(r.Context(), *bundle.JobID, "bootstrapped")
 	}
-	resp := h.bundleToResp(bundle)
+	resp := h.bundleToRespForSite(r.Context(), bundle)
 	// Echo the raw token back so http-boot can template it into the
 	// nocloud datasource URL and the WinPE bearer. The token already
 	// authenticated this request, so this is not an escalation.

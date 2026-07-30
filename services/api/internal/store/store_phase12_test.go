@@ -380,6 +380,54 @@ func TestUpdateMachinePartial(t *testing.T) {
 	}
 }
 
+func TestSitesCRUDAndMirrorLookup(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = st.Pool().Exec(ctx, `DELETE FROM sites`)
+	})
+
+	mirror := "http://192.168.10.2:8090"
+	desc := "Oslo branch"
+	site, err := st.UpsertSite(ctx, "oslo", &mirror, &desc)
+	must(t, err)
+	if site.MirrorBaseURL == nil || *site.MirrorBaseURL != mirror {
+		t.Fatalf("site: %+v", site)
+	}
+
+	// Upsert updates in place.
+	mirror2 := "http://192.168.10.3:8090"
+	site, err = st.UpsertSite(ctx, "oslo", &mirror2, nil)
+	must(t, err)
+	if *site.MirrorBaseURL != mirror2 {
+		t.Fatalf("upsert didn't update: %+v", site)
+	}
+
+	got, err := st.SiteMirror(ctx, "oslo")
+	must(t, err)
+	if got != mirror2 {
+		t.Fatalf("SiteMirror = %q", got)
+	}
+	// Unknown site and empty name → "" without error.
+	for _, name := range []string{"nowhere", ""} {
+		got, err = st.SiteMirror(ctx, name)
+		must(t, err)
+		if got != "" {
+			t.Fatalf("SiteMirror(%q) = %q", name, got)
+		}
+	}
+
+	sites, err := st.ListSites(ctx)
+	must(t, err)
+	if len(sites) != 1 {
+		t.Fatalf("listed %d sites", len(sites))
+	}
+	must(t, st.DeleteSite(ctx, "oslo"))
+	if err := st.DeleteSite(ctx, "oslo"); err != ErrNotFound {
+		t.Fatalf("second delete: %v", err)
+	}
+}
+
 func TestBlobAndImageVersionIngest(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

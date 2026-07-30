@@ -380,6 +380,79 @@ func TestCaptureJobUserData(t *testing.T) {
 	}
 }
 
+func TestSiteMirrorRewritesMediaURLs(t *testing.T) {
+	h := startAPI(t)
+	suffix := randHex(4)
+	site := "e2e-mirror-" + suffix
+	mirror := "http://192.168.99.2:8090"
+
+	// Operator registers the site's edge mirror.
+	status, s := h.call("PUT", "/api/v1/sites", "", map[string]any{
+		"name": site, "mirror_base_url": mirror,
+	})
+	h.must(status, 200, s, "upsert site")
+
+	// Fixtures, then re-home the machine to the site.
+	_, profileID, machineID := h.setupFixtures(suffix)
+	status, m := h.call("PATCH", "/api/v1/machines/"+machineID, "", map[string]any{
+		"attributes": map[string]any{"site": site},
+	})
+	h.must(status, 200, m, "set machine site")
+
+	// Point the image's media at the deploy server's own /static path so
+	// the rewrite has something to act on.
+	imgs, _ := m["ID"].(string)
+	_ = imgs
+	token, _ := h.seedRedeem(machineID, profileID, "deploy", "")
+
+	// The fixture image uses third-party mirror.test URLs — those must
+	// NOT be rewritten. Verify passthrough first.
+	status, render := h.call("GET", "/internal/render/by-token/"+token, "", nil)
+	h.must(status, 200, render, "render (third-party media)")
+	img, _ := render["image"].(map[string]any)
+	if img["kernel_url"] != "https://mirror.test/vmlinuz" {
+		t.Fatalf("third-party URL rewritten: %v", img["kernel_url"])
+	}
+
+	// Now switch the image media to deploy-server paths and re-render.
+	resp, err := http.Get(h.base + "/api/v1/images")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var imgsList []map[string]any
+	err = json.NewDecoder(resp.Body).Decode(&imgsList)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageID := ""
+	for _, im := range imgsList {
+		if im["name"] == "e2e-ubuntu-"+suffix {
+			imageID, _ = im["id"].(string)
+		}
+	}
+	if imageID == "" {
+		t.Fatal("fixture image not found")
+	}
+	status, out := h.call("PATCH", "/api/v1/images/"+imageID, "", map[string]any{
+		"media": map[string]any{
+			"kernel_url": "https://" + deployFQDN + "/static/linux-24.04/vmlinuz",
+			"initrd_url": "https://" + deployFQDN + "/static/linux-24.04/initrd",
+		},
+	})
+	h.must(status, 200, out, "patch image media")
+
+	status, render = h.call("GET", "/internal/render/by-token/"+token, "", nil)
+	h.must(status, 200, render, "render (deploy-server media)")
+	img, _ = render["image"].(map[string]any)
+	if img["kernel_url"] != mirror+"/static/linux-24.04/vmlinuz" {
+		t.Fatalf("kernel_url not mirrored: %v", img["kernel_url"])
+	}
+	if img["initrd_url"] != mirror+"/static/linux-24.04/initrd" {
+		t.Fatalf("initrd_url not mirrored: %v", img["initrd_url"])
+	}
+}
+
 func TestWakeOnLANQueue(t *testing.T) {
 	h := startAPI(t)
 	suffix := randHex(4)
