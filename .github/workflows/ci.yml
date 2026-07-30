@@ -99,7 +99,8 @@ jobs:
           PGPASSWORD: test
         run: |
           set -euo pipefail
-          sudo apt-get update -q && sudo apt-get install -y -q postgresql-client
+          # ubuntu-latest ships psql; only hit apt if it's missing.
+          command -v psql >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q postgresql-client; }
           psql -h 127.0.0.1 -U test -d test -v ON_ERROR_STOP=1 \
             -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
           for f in services/api/internal/store/migrations/*.sql; do
