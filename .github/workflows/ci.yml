@@ -64,6 +64,35 @@ jobs:
           DEPLOY_TEST_PG_DSN: postgres://test:test@127.0.0.1:5432/test?sslmode=disable
         run: go test ./... -count=1
 
+  e2e:
+    name: deploy-spine e2e smoke
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.6-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.4'
+          cache: true
+          cache-dependency-path: tests/e2e/go.sum
+      - name: run e2e smoke test
+        working-directory: tests/e2e
+        env:
+          DEPLOY_TEST_PG_DSN: postgres://test:test@127.0.0.1:5432/test?sslmode=disable
+        run: go test ./... -count=1 -v
+
   shell:
     name: shellcheck
     runs-on: ubuntu-latest

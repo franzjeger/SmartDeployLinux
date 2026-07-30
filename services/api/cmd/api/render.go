@@ -210,6 +210,17 @@ func (h *handlers) writeUserData(w http.ResponseWriter, r *http.Request, bundle 
 		jobID = bundle.JobID.String()
 	}
 
+	// Capture jobs get a capture cloud-init instead of an installer
+	// answer file: the live environment fetches capture.sh (token-gated)
+	// and archives the installed OS rather than overwriting it.
+	if bundle.JobID != nil {
+		if jc, err := h.store.GetJobCapture(r.Context(), *bundle.JobID); err == nil && jc.Kind == "capture" {
+			w.Header().Set("Content-Type", "text/cloud-config")
+			fmt.Fprintf(w, linuxCaptureUserDataTpl, h.publicURL, jobID, tok, h.publicURL, jobID)
+			return
+		}
+	}
+
 	ctxData := userDataContext{
 		Hostname:  host,
 		PublicURL: h.publicURL,
@@ -321,6 +332,17 @@ autoinstall:
   late-commands:
     - 'curtin in-target -- bash -c true || true'
     - 'curl -sf {{.PublicURL}}/v1/jobs/{{.JobID}}/events -X POST -H "Authorization: Bearer {{.Token}}" -H "Content-Type: application/json" --data "{\"phase\":\"completed\",\"message\":\"autoinstall finished\"}" || true'
+`
+
+// linuxCaptureUserDataTpl boots a live environment straight into the
+// capture script. Args: publicURL, jobID, token, publicURL, jobID.
+const linuxCaptureUserDataTpl = `#cloud-config
+runcmd:
+  - |
+    export DEPLOY_API=%s DEPLOY_JOB=%s DEPLOY_TOKEN=%s
+    curl -sf -H "Authorization: Bearer $DEPLOY_TOKEN" \
+      %s/v1/jobs/%s/capture.sh -o /run/capture.sh \
+      && sh /run/capture.sh
 `
 
 func (h *handlers) renderUserData(w http.ResponseWriter, r *http.Request) {
@@ -624,7 +646,12 @@ func mapPhaseToState(phase string) string {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	enc := json.NewEncoder(w)
+	// No HTML entity escaping: responses carry presigned URLs whose &
+	// separators must survive naive shell-side JSON extraction
+	// (capture.sh parses upload_url with sed).
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(v)
 }
 
 func bearerToken(r *http.Request) string {

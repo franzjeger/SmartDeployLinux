@@ -234,6 +234,7 @@ func serve() {
 		r.Get("/image.wim", h.winpeImage)
 		r.Get("/drivers.zip", h.winpeDrivers)
 		r.Get("/unattend.xml", h.winpeUnattend)
+		r.Get("/capture.sh", h.captureScript)
 		r.Post("/capture-upload", h.captureUpload)
 		r.Post("/capture-complete", h.captureComplete)
 	})
@@ -288,10 +289,14 @@ func serve() {
 	intr.Use(middleware.Recoverer)
 	intr.Use(middleware.Timeout(30 * time.Second))
 
+	// Routes here are relative to /internal — the router is mounted at
+	// /internal on whichever listener serves it (mTLS listener or, in
+	// dev mode, the public one). Registering absolute /internal/...
+	// paths here would double the prefix when mounted.
 	intr.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	intr.Route("/internal/render", func(r chi.Router) {
+	intr.Route("/render", func(r chi.Router) {
 		r.Get("/by-token/{token}", h.renderByToken)
 		r.Get("/by-token/{token}/user-data", h.renderUserDataByToken)
 		r.Get("/by-token/{token}/meta-data", h.renderMetaDataByToken)
@@ -323,9 +328,14 @@ func serve() {
 			slog.Error("mtls load", "err", err)
 			os.Exit(2)
 		}
+		internalRoot := chi.NewRouter()
+		internalRoot.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte("ok"))
+		})
+		internalRoot.Mount("/internal", intr)
 		internalSrv = &http.Server{
 			Addr:              internalListen,
-			Handler:           intr,
+			Handler:           internalRoot,
 			TLSConfig:         bundle.ServerConfig(),
 			ReadHeaderTimeout: 5 * time.Second,
 			WriteTimeout:      30 * time.Second,

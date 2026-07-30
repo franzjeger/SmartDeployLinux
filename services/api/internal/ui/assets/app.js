@@ -638,9 +638,8 @@ route("/machines/:id", async ({ id }) => {
 
   $("#capture-machine").addEventListener("click", async () => {
     const images = await api("GET", "/api/v1/images").catch(() => []);
-    const winImages = images.filter(i => i.os_family === "windows");
-    if (!winImages.length) {
-      toast("Create a Windows image first (Images page) — capture writes a new version of it.", "err");
+    if (!images.length) {
+      toast("Create an image first (Images page) — capture writes a new version of it.", "err");
       return;
     }
     if (!profiles.length) {
@@ -650,13 +649,15 @@ route("/machines/:id", async ({ id }) => {
     openModal({
       title: "Capture golden image",
       body: `
-        <p class="small muted">Sysprep the machine (<code>sysprep /generalize /oobe /shutdown</code>),
-        then boot it with a bootstrap stick and this code. WinPE captures the OS volume and uploads it
-        as a new version of the chosen image. A second local volume or USB disk is needed as WIM scratch space.</p>
+        <p class="small muted">Generalize the machine first (Windows:
+        <code>sysprep /generalize /oobe /shutdown</code>; Linux: clear machine-id and host keys — the
+        capture script prunes them too), then boot it with a bootstrap stick and this code. The capture
+        environment archives the OS volume and uploads it as a new version of the chosen image.
+        A second local volume or USB disk is needed as scratch space.</p>
         <form id="capture-form">
           <div class="row"><label class="full">Target image
             <select name="image_id">
-              ${winImages.map(i => `<option value="${i.id}">${escapeHTML(i.name)} (${escapeHTML(i.os_version)})</option>`).join("")}
+              ${images.map(i => `<option value="${i.id}">${escapeHTML(i.name)} (${escapeHTML(i.os_family)} ${escapeHTML(i.os_version)})</option>`).join("")}
             </select></label></div>
           <div class="row"><label class="full">Boot profile (provides the WinPE boot media)
             <select name="profile_id">

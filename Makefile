@@ -65,8 +65,8 @@ test-unit: ## Run Go unit tests across all services.
 	cd services/http-boot && go test ./...
 	cd services/deployctl && go test ./...
 
-test-e2e: build-bootstrap ## Run nested-KVM e2e (needs /dev/kvm).
-	$(MAKE) -C tests/e2e run
+test-e2e: ## Run the deploy-spine e2e smoke test (needs DEPLOY_TEST_PG_DSN).
+	cd tests/e2e && go test ./... -count=1 -v
 
 # --- security --------------------------------------------------------------
 

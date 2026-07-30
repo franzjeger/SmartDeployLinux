@@ -361,6 +361,45 @@ ingest surfaces.
 - Broker capture-copy `INSERT…SELECT` validated against the live
   Postgres 16 schema.
 
+## Phase 15 — Linux capture + end-to-end smoke harness
+
+**Done.** Capture now covers both OS families, and the `tests/e2e/`
+harness promised since Phase 10 exists and runs in CI.
+
+### Linux golden-image capture
+
+- `linux/scripts/capture.sh` (embedded + sync-tested): finds the
+  installed root filesystem, tars it (`--numeric-owner --xattrs --acls
+  --one-file-system`, volatile paths pruned incl. machine-id and SSH
+  host keys) with zstd/gzip to auto-discovered scratch space, then uses
+  the same OS-agnostic capture-upload / capture-complete endpoints as
+  WinPE.
+- Served token-gated at `GET /v1/jobs/{id}/capture.sh`.
+- Capture jobs on the Linux path get a **capture cloud-init** instead of
+  an installer answer file — the live environment fetches and runs
+  capture.sh rather than overwriting the machine it's supposed to
+  archive.
+- `writeJSON` no longer HTML-escapes (`&` in presigned URLs must survive
+  capture.sh's sed-based JSON extraction).
+- UI capture modal now offers Linux images too.
+
+### End-to-end smoke harness (`tests/e2e/`)
+
+Black-box: builds the real api binary, runs it against real Postgres,
+and walks the full lifecycle over HTTP — operator creates
+image/profile/machine, the broker's redeem writes are seeded via SQL,
+then: iPXE render by token (echoes token, advances job), user-data with
+bearer, repeated phone-homes, completed job with event trail, token
+dead after completion, `/metrics` populated. A second test verifies
+capture-job user-data runs capture.sh (and that the script is
+token-gated). Wired into `make test-e2e` and a new CI job.
+
+**The harness immediately caught a real bug:** in dev mode the internal
+router was mounted at `/internal` while its routes already carried the
+`/internal/...` prefix, so every render endpoint 404'd at
+`/internal/internal/...`. The mTLS listener masked it. Routes are now
+prefix-relative and mounted consistently on both listeners.
+
 ## Phase 11 — Final docs
 **Done.**
 

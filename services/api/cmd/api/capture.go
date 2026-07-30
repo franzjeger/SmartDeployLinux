@@ -15,6 +15,7 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -28,6 +29,21 @@ import (
 //
 //go:embed capture.cmd
 var captureCmdBody string
+
+// captureShBody is the Linux counterpart (linux/scripts/capture.sh),
+// served at GET /v1/jobs/{id}/capture.sh for linux capture jobs.
+//
+//go:embed capture.sh
+var captureShBody string
+
+// GET /v1/jobs/{id}/capture.sh
+func (h *handlers) captureScript(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := h.captureJob(w, r); !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-shellscript")
+	fmt.Fprint(w, captureShBody)
+}
 
 // captureJob authenticates the request and asserts the job is a capture
 // job, returning its capture target.
@@ -81,7 +97,7 @@ func (h *handlers) captureUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bucket, _ := bucketForRole("images")
-	key := req.SHA256[:2] + "/" + req.SHA256 + "-captured.wim"
+	key := req.SHA256[:2] + "/" + req.SHA256 + "-capture"
 	blob, err := h.store.CreateBlob(r.Context(), req.SHA256, req.SizeBytes, bucket, key)
 	if err != nil {
 		http.Error(w, "create blob: "+err.Error(), http.StatusInternalServerError)

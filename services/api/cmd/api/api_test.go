@@ -120,6 +120,27 @@ func TestCaptureCmdMatchesCanonical(t *testing.T) {
 	}
 }
 
+func TestCaptureShMatchesCanonical(t *testing.T) {
+	if len(captureShBody) < 1000 {
+		t.Fatalf("capture.sh looks like a stub (%d bytes)", len(captureShBody))
+	}
+	for _, want := range []string{
+		"capture-upload", "capture-complete", "sha256sum",
+		"Authorization: Bearer",
+	} {
+		if !strings.Contains(captureShBody, want) {
+			t.Fatalf("capture.sh missing %q", want)
+		}
+	}
+	canonical, err := os.ReadFile("../../../../linux/scripts/capture.sh")
+	if err != nil {
+		t.Skipf("canonical capture.sh not present: %v", err)
+	}
+	if string(canonical) != captureShBody {
+		t.Fatal("services/api/cmd/api/capture.sh out of sync with linux/scripts/capture.sh")
+	}
+}
+
 func TestLowerHex(t *testing.T) {
 	if got := lowerHex("AB12cdEF"); got != "ab12cdef" {
 		t.Fatalf("lowerHex = %q", got)
