@@ -257,6 +257,58 @@ libraries. All verified by unit + Postgres-backed integration tests.
   test harness now cleans `users`/`bootstrap_sticks` so the suite is
   rerunnable against a persistent database.
 
+## Phase 13 — Image ingest, stick-config generator, UI login
+
+**Done.** The three "NOT STARTED" items from Phase 8's backlog.
+
+### Image ingest (SmartDeploy "import image")
+
+- `internal/s3sign`: dependency-free AWS SigV4 presigner (validated
+  against the AWS-documented signature vector; works with MinIO path
+  style and S3 virtual-host style).
+- `POST /api/v1/blobs` registers a blob (idempotent on sha256) and
+  returns a presigned PUT URL — image bytes go straight to the object
+  store, never through the API.
+- `POST/GET /api/v1/images/{id}/versions` links uploaded blobs as image
+  versions; the render pipeline already picks the newest version.
+- UI: image detail gains a Versions panel with chunked in-browser
+  SHA-256 (incremental FIPS 180-4, verified against node's crypto —
+  multi-GB WIMs hash without loading into memory), progress, direct
+  presigned upload, and version linking.
+- New env: `S3_PUBLIC_ENDPOINT` (host the operator's browser can reach),
+  `S3_REGION`.
+
+### Stick-config generator
+
+- `GET /api/v1/bootstrap-sticks/config?tailnet=...` returns the rendered
+  stick `config.json`, the pinned CA PEM (when `DEPLOY_CA_CERT_PATH`
+  exists), and a copy-pasteable `make-stick.sh` command. Image assembly
+  stays on the operator workstation (losetup needs root) but no
+  parameter is hand-typed anymore.
+- UI: "Generate stick config" on the Sticks page (modal + copy button).
+- New env: `DEPLOY_TAILNET`, `DEPLOY_CA_CERT_PATH`.
+
+### UI OIDC login (closes "UI works only in dev mode")
+
+- `GET /api/v1/auth/config` (pre-auth) exposes issuer + client_id.
+- SPA implements the authorization-code + PKCE flow in vanilla JS
+  (S256 challenge, state check, sessionStorage ID token), attaches
+  `Authorization: Bearer` to every API call, auto-restarts login on 401,
+  and shows a log-out link.
+- SSE: `EventSource` can't set headers, so the SPA mirrors the token
+  into a `SameSite=Strict` cookie and the server promotes it to a
+  bearer **only on the read-only SSE route** (`cookieBearerFallback`) —
+  the rest of the API stays header-only (no CSRF surface).
+
+### Tests
+
+- s3sign: AWS known-answer vector, key escaping, determinism (3).
+- auth-config + stick-config handlers, bucket role mapping (3).
+- Store integration: blob idempotency, version linking + dup-tag
+  rejection, version listing (1 test, 3 assertions ↑).
+- JS SHA-256 validated against node crypto across block-boundary sizes
+  and chunked input (build-time check, not committed as a test runner).
+
 ## Phase 11 — Final docs
 **Done.**
 

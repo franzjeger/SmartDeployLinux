@@ -1440,6 +1440,80 @@ func (s *Store) RecordMachineInventory(ctx context.Context, machineID uuid.UUID,
 	return err
 }
 
+// --- blobs / image versions (ingest) -----------------------------------
+
+type Blob struct {
+	ID        uuid.UUID `json:"id"`
+	SHA256    string    `json:"sha256"`
+	SizeBytes int64     `json:"size_bytes"`
+	S3Bucket  string    `json:"s3_bucket"`
+	S3Key     string    `json:"s3_key"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// CreateBlob registers an object about to be uploaded. Idempotent on
+// sha256: re-registering the same content returns the existing row, so
+// a retried upload doesn't strand duplicates.
+func (s *Store) CreateBlob(ctx context.Context, sha256hex string, sizeBytes int64, bucket, key string) (*Blob, error) {
+	b := &Blob{}
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO blobs (sha256, size_bytes, s3_bucket, s3_key)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (sha256) DO UPDATE SET sha256 = EXCLUDED.sha256
+		RETURNING id, sha256, size_bytes, s3_bucket, s3_key, created_at`,
+		sha256hex, sizeBytes, bucket, key).
+		Scan(&b.ID, &b.SHA256, &b.SizeBytes, &b.S3Bucket, &b.S3Key, &b.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+type ImageVersion struct {
+	ID         uuid.UUID `json:"id"`
+	ImageID    uuid.UUID `json:"image_id"`
+	VersionTag string    `json:"version_tag"`
+	BlobID     uuid.UUID `json:"blob_id"`
+	BlobKey    string    `json:"blob_key"`
+	BlobSHA256 string    `json:"blob_sha256"`
+	SizeBytes  int64     `json:"size_bytes"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// CreateImageVersion links an uploaded blob to an image as a new version.
+func (s *Store) CreateImageVersion(ctx context.Context, imageID, blobID uuid.UUID, versionTag string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO image_versions (image_id, blob_id, version_tag)
+		VALUES ($1, $2, $3)
+		RETURNING id`, imageID, blobID, versionTag).Scan(&id)
+	return id, err
+}
+
+func (s *Store) ListImageVersions(ctx context.Context, imageID uuid.UUID) ([]ImageVersion, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT iv.id, iv.image_id, iv.version_tag, iv.blob_id,
+		       b.s3_key, b.sha256, b.size_bytes, iv.created_at
+		FROM image_versions iv
+		JOIN blobs b ON b.id = iv.blob_id
+		WHERE iv.image_id = $1
+		ORDER BY iv.created_at DESC`, imageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ImageVersion
+	for rows.Next() {
+		var v ImageVersion
+		if err := rows.Scan(&v.ID, &v.ImageID, &v.VersionTag, &v.BlobID,
+			&v.BlobKey, &v.BlobSHA256, &v.SizeBytes, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // --- errors ----------------------------------------------------------
 
 var (

@@ -199,6 +199,10 @@ func serve() {
 	// netboot.xyz-style picker.
 	pub.Get("/catalog/menu.ipxe", h.catalogMenuIPXE)
 
+	// Pre-auth: the SPA fetches issuer/client_id to run the OIDC
+	// code+PKCE flow. Public values only.
+	pub.Get("/api/v1/auth/config", h.authConfig)
+
 	// Phone-home from in-OS installers (cross-WAN; bearer-token auth).
 	pub.Route("/v1/jobs/{id}/events", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
@@ -211,6 +215,11 @@ func serve() {
 	// idle disconnects and ping keepalives internally.
 	pub.Route("/api/v1/jobs/{id}/events/stream", func(r chi.Router) {
 		if h.verifier != nil {
+			// EventSource cannot set an Authorization header; the SPA
+			// mirrors its ID token into a SameSite=Strict cookie. The
+			// fallback is scoped to this read-only GET route so the
+			// rest of the API stays header-only (no CSRF surface).
+			r.Use(cookieBearerFallback)
 			r.Use(auth.Middleware(h.verifier))
 		}
 		r.Get("/", h.streamJobEvents)
@@ -251,6 +260,9 @@ func serve() {
 		r.Get("/images/{id}", h.getImage)
 		r.Patch("/images/{id}", h.updateImage)
 		r.Delete("/images/{id}", h.deleteImage)
+		r.Post("/blobs", h.createBlob)
+		r.Post("/images/{id}/versions", h.createImageVersion)
+		r.Get("/images/{id}/versions", h.listImageVersions)
 		r.Get("/catalog", h.listCatalog)
 		r.Post("/catalog/install", h.installFromCatalog)
 		r.Get("/jobs", h.listJobs)
@@ -260,6 +272,7 @@ func serve() {
 		r.Post("/deployments/issue", h.issueDeployment)
 		r.Post("/bootstrap-sticks", h.registerStick)
 		r.Get("/bootstrap-sticks", h.listSticks)
+		r.Get("/bootstrap-sticks/config", h.stickConfig)
 	})
 
 	// --- internal router: render endpoints, called by http-boot only --
@@ -343,6 +356,19 @@ func serve() {
 	if internalSrv != nil {
 		_ = internalSrv.Shutdown(shutdown)
 	}
+}
+
+// cookieBearerFallback promotes the SPA's session cookie to an
+// Authorization header when none is present. Used only on the SSE route.
+func cookieBearerFallback(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			if c, err := r.Cookie("deploy_session"); err == nil && c.Value != "" {
+				r.Header.Set("Authorization", "Bearer "+c.Value)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func getenv(k, def string) string {

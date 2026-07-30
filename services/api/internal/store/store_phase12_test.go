@@ -195,3 +195,39 @@ func TestRecordMachineInventory_MergesAttributes(t *testing.T) {
 		t.Fatalf("hardware inventory not merged: %v", attrs)
 	}
 }
+
+func TestBlobAndImageVersionIngest(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	sha := randSHA(t)
+	b1, err := st.CreateBlob(ctx, sha, 1234, "images", "ab/"+sha+"-install.wim")
+	must(t, err)
+	// Idempotent on sha256: re-registering returns the same row.
+	b2, err := st.CreateBlob(ctx, sha, 1234, "images", "different/key")
+	must(t, err)
+	if b1.ID != b2.ID || b2.S3Key != b1.S3Key {
+		t.Fatalf("re-register not idempotent: %+v vs %+v", b1, b2)
+	}
+
+	var imageID uuid.UUID
+	must(t, st.Pool().QueryRow(ctx, `
+		INSERT INTO images (name, os_family, os_version, arch)
+		VALUES ('win11-ingest', 'windows', '11', 'amd64') RETURNING id`).Scan(&imageID))
+
+	vID, err := st.CreateImageVersion(ctx, imageID, b1.ID, "24H2-v1")
+	must(t, err)
+	if vID == uuid.Nil {
+		t.Fatal("nil version id")
+	}
+	// Duplicate tag on the same image must be rejected (unique constraint).
+	if _, err := st.CreateImageVersion(ctx, imageID, b1.ID, "24H2-v1"); err == nil {
+		t.Fatal("duplicate version tag accepted")
+	}
+
+	vs, err := st.ListImageVersions(ctx, imageID)
+	must(t, err)
+	if len(vs) != 1 || vs[0].BlobSHA256 != sha || vs[0].SizeBytes != 1234 {
+		t.Fatalf("bad version list: %+v", vs)
+	}
+}
