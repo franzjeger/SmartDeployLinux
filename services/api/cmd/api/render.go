@@ -3,13 +3,14 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"text/template"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/your-org/deployserver/api/internal/auth"
 	"github.com/your-org/deployserver/api/internal/eventbus"
+	"github.com/your-org/deployserver/api/internal/metrics"
 	"github.com/your-org/deployserver/api/internal/store"
 	"github.com/your-org/deployserver/api/internal/tokens"
 )
@@ -27,6 +29,7 @@ type handlers struct {
 	deployFQDN string
 	verifier   *auth.Verifier
 	bus        *eventbus.Bus
+	metrics    *metrics.Registry
 }
 
 type renderResp struct {
@@ -165,7 +168,16 @@ func (h *handlers) renderByToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.bundleToResp(bundle))
+	// The stick just fetched its boot script: the deployment is under way.
+	if bundle.JobID != nil {
+		_ = h.store.AdvanceJob(r.Context(), *bundle.JobID, "bootstrapped")
+	}
+	resp := h.bundleToResp(bundle)
+	// Echo the raw token back so http-boot can template it into the
+	// nocloud datasource URL and the WinPE bearer. The token already
+	// authenticated this request, so this is not an escalation.
+	resp.OneShotToken = tok
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *handlers) renderUserDataByToken(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +192,15 @@ func (h *handlers) renderUserDataByToken(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "token invalid or consumed", http.StatusGone)
 		return
 	}
+	h.writeUserData(w, r, bundle, tok)
+}
+
+// writeUserData renders the Linux answer file for a machine. If the
+// profile has an operator-authored template (kind autoinstall or
+// cloud-init), that template is rendered with the same context as the
+// unattend path; otherwise a built-in Ubuntu autoinstall fallback is
+// used. The one-shot token is injected so phone-home authenticates.
+func (h *handlers) writeUserData(w http.ResponseWriter, r *http.Request, bundle *store.RenderBundle, tok string) {
 	host := bundle.Machine.ID.String()
 	if bundle.Machine.AssetTag != nil {
 		host = *bundle.Machine.AssetTag
@@ -188,8 +209,64 @@ func (h *handlers) renderUserDataByToken(w http.ResponseWriter, r *http.Request)
 	if bundle.JobID != nil {
 		jobID = bundle.JobID.String()
 	}
+
+	ctxData := userDataContext{
+		Hostname:  host,
+		PublicURL: h.publicURL,
+		JobID:     jobID,
+		Token:     tok,
+	}
+	ctxData.Machine.ID = bundle.Machine.ID.String()
+	ctxData.Machine.AssetTag = host
+	if len(bundle.ProfileVars) > 0 {
+		_ = json.Unmarshal(bundle.ProfileVars, &ctxData.Vars)
+	}
+
+	tplBody := h.profileTemplate(r, bundle.ProfileID.String(), "autoinstall")
+	if tplBody == "" {
+		tplBody = h.profileTemplate(r, bundle.ProfileID.String(), "cloud-init")
+	}
+	if tplBody == "" {
+		tplBody = ubuntuUserDataTpl
+	}
+
+	t, err := template.New("user-data").Option("missingkey=zero").Parse(tplBody)
+	if err != nil {
+		http.Error(w, "template parse: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, ctxData); err != nil {
+		http.Error(w, "template render: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/cloud-config")
-	fmt.Fprintf(w, ubuntuUserDataTpl, host, h.publicURL, jobID)
+	_, _ = w.Write(buf.Bytes())
+}
+
+type userDataContext struct {
+	Hostname  string
+	PublicURL string
+	JobID     string
+	Token     string
+	Machine   struct {
+		ID       string
+		AssetTag string
+	}
+	Vars map[string]any
+}
+
+// profileTemplate loads an answer-file template body for a profile, or
+// "" when none is configured.
+func (h *handlers) profileTemplate(r *http.Request, profileID, kind string) string {
+	var body string
+	row := h.store.Pool().QueryRow(r.Context(), `
+		SELECT body FROM answer_file_templates
+		WHERE profile_id = $1 AND kind = $2`, profileID, kind)
+	if err := row.Scan(&body); err != nil {
+		return ""
+	}
+	return body
 }
 
 func (h *handlers) renderMetaDataByToken(w http.ResponseWriter, r *http.Request) {
@@ -215,23 +292,35 @@ func (h *handlers) bootTokenPepper() []byte {
 	return []byte(h.deployFQDN)
 }
 
+// ubuntuUserDataTpl is the built-in fallback when the profile has no
+// autoinstall / cloud-init template. The account ships with a locked
+// password (SSH-key or console recovery only) unless the profile sets
+// vars.password_hash to a crypt(3) SHA-512 hash. Progress phone-homes
+// carry the deployment's one-shot bearer token.
 const ubuntuUserDataTpl = `#cloud-config
 autoinstall:
   version: 1
   identity:
-    hostname: %s
-    username: ubuntu
-    password: "$6$rounds=4096$REPLACEME"
+    hostname: {{.Hostname}}
+    username: {{if .Vars.username}}{{.Vars.username}}{{else}}ubuntu{{end}}
+    password: "{{if .Vars.password_hash}}{{.Vars.password_hash}}{{else}}!{{end}}"
   ssh:
     install-server: yes
+{{- if .Vars.ssh_authorized_key}}
+    authorized-keys:
+      - "{{.Vars.ssh_authorized_key}}"
+{{- end}}
   storage:
     layout:
       name: lvm
   packages:
     - openssh-server
     - python3-minimal
+  early-commands:
+    - 'curl -sf {{.PublicURL}}/v1/jobs/{{.JobID}}/events -X POST -H "Authorization: Bearer {{.Token}}" -H "Content-Type: application/json" --data "{\"phase\":\"imaging\",\"message\":\"autoinstall started\"}" || true'
   late-commands:
-    - curtin in-target -- bash -c 'curl -sf %s/v1/jobs/%s/events -X POST -H "Authorization: Bearer ONESHOT" -H "Content-Type: application/json" --data "{\"phase\":\"completed\",\"message\":\"autoinstall finished\"}" || true'
+    - 'curtin in-target -- bash -c true || true'
+    - 'curl -sf {{.PublicURL}}/v1/jobs/{{.JobID}}/events -X POST -H "Authorization: Bearer {{.Token}}" -H "Content-Type: application/json" --data "{\"phase\":\"completed\",\"message\":\"autoinstall finished\"}" || true'
 `
 
 func (h *handlers) renderUserData(w http.ResponseWriter, r *http.Request) {
@@ -246,16 +335,10 @@ func (h *handlers) renderUserData(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no active profile", http.StatusConflict)
 		return
 	}
-	host := bundle.Machine.ID.String()
-	if bundle.Machine.AssetTag != nil {
-		host = *bundle.Machine.AssetTag
-	}
-	jobID := ""
-	if bundle.JobID != nil {
-		jobID = bundle.JobID.String()
-	}
-	w.Header().Set("Content-Type", "text/cloud-config")
-	fmt.Fprintf(w, ubuntuUserDataTpl, host, h.publicURL, jobID)
+	// Legacy path (LAN PXE by machine id): no boot token exists, so the
+	// phone-home lines render with an empty bearer and are ignored by
+	// the API. The token-based path is the supported one.
+	h.writeUserData(w, r, bundle, "")
 }
 
 func (h *handlers) renderMetaData(w http.ResponseWriter, r *http.Request) {
@@ -379,20 +462,19 @@ func (h *handlers) appendDeploymentEvent(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "missing token", http.StatusUnauthorized)
 		return
 	}
-	tokHash := hashToken(tok)
+	// Must match the scheme used by auth-broker when the token was
+	// minted (peppered HashBootToken) or verification can never succeed.
+	tokHash := tokens.HashBootToken(tok, h.bootTokenPepper())
 
-	srcIP, _ := readSourceIP(r)
-	verifiedJob, err := h.store.VerifyOneShotToken(r.Context(), tokHash, srcIP)
-	if errors.Is(err, store.ErrTokenInvalid) {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
-	}
-	if err != nil {
+	// Non-consuming check: an install phones home many times over its
+	// lifetime (imaging, post_install, completed). Tokens are revoked by
+	// TransitionJob when the job reaches a terminal state.
+	if _, _, err := h.store.VerifyPhoneHomeToken(r.Context(), tokHash, jobID); err != nil {
+		if errors.Is(err, store.ErrTokenInvalid) {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
 		http.Error(w, "internal", http.StatusInternalServerError)
-		return
-	}
-	if verifiedJob != jobID {
-		http.Error(w, "token does not match job", http.StatusForbidden)
 		return
 	}
 
@@ -411,7 +493,10 @@ func (h *handlers) appendDeploymentEvent(w http.ResponseWriter, r *http.Request)
 
 	target := mapPhaseToState(req.Phase)
 	if target != "" {
-		_ = h.store.TransitionJob(r.Context(), jobID, target)
+		// AdvanceJob walks intermediate states (e.g. pending →
+		// bootstrapped → imaging) so an installer that reports
+		// "imaging" first doesn't hit an invalid-transition error.
+		_ = h.store.AdvanceJob(r.Context(), jobID, target)
 	}
 
 	// Push to SSE subscribers so the UI doesn't have to wait for poll.
@@ -548,19 +633,15 @@ func bearerToken(r *http.Request) string {
 	if len(v) > len(prefix) && v[:len(prefix)] == prefix {
 		return v[len(prefix):]
 	}
-	// Fallback: query string ?token=... (legacy WinPE path; logs leak).
-	return r.URL.Query().Get("token")
-}
-
-func hashToken(tok string) string {
-	sum := sha256.Sum256([]byte(tok))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	// No query-string fallback: ?token=... leaks via access logs.
+	// SECURITY.md §4 #2.
+	return ""
 }
 
 func readSourceIP(r *http.Request) (a netipAddrLike, err error) {
 	host := r.RemoteAddr
-	if i := indexByte(host, ':'); i >= 0 {
-		host = host[:i]
+	if h, _, splitErr := net.SplitHostPort(host); splitErr == nil {
+		host = h
 	}
 	return parseIP(host), nil
 }

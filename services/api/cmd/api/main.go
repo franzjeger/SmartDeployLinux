@@ -20,6 +20,7 @@ import (
 	"github.com/your-org/deployserver/api/internal/auditlog"
 	"github.com/your-org/deployserver/api/internal/auth"
 	"github.com/your-org/deployserver/api/internal/eventbus"
+	"github.com/your-org/deployserver/api/internal/metrics"
 	"github.com/your-org/deployserver/api/internal/mtls"
 	"github.com/your-org/deployserver/api/internal/store"
 	"github.com/your-org/deployserver/api/internal/ui"
@@ -147,12 +148,14 @@ func serve() {
 		auth.SetUserResolver(auth.ResolverFromPool(st.Pool()))
 	}
 
+	reg := metrics.NewRegistry()
 	h := &handlers{
 		store:      st,
 		publicURL:  publicURL,
 		deployFQDN: deployFQDN,
 		verifier:   verifier,
 		bus:        eventbus.New(),
+		metrics:    reg,
 	}
 
 	// --- public router: phone-home + operator API + healthz -----------
@@ -169,6 +172,20 @@ func serve() {
 	pub.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Readiness: healthz says the process is up; readyz says it can
+	// actually serve (DB reachable). Compose/K8s should gate on readyz.
+	pub.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := st.Pool().Ping(ctx); err != nil {
+			http.Error(w, "db unreachable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	})
+	// Prometheus metrics. Not exposed through Caddy's public routes;
+	// scrape it over the internal network.
+	pub.Handle("/metrics", reg.Handler())
 
 	// Operator UI — embedded HTML+CSS+JS. Single-page app at /, with
 	// static assets under /assets/. ui.Handler() handles both.
@@ -185,6 +202,7 @@ func serve() {
 	// Phone-home from in-OS installers (cross-WAN; bearer-token auth).
 	pub.Route("/v1/jobs/{id}/events", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
+		r.Use(reg.Middleware("phone_home"))
 		r.Post("/", h.appendDeploymentEvent)
 	})
 
@@ -201,6 +219,7 @@ func serve() {
 	// WinPE per-job endpoints. Bearer-token + state-gated.
 	pub.Route("/v1/jobs/{id}", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
+		r.Use(reg.Middleware("winpe"))
 		r.Get("/deploy.cmd", h.winpeDeployCmd)
 		r.Post("/plan", h.winpePlan)
 		r.Get("/image.wim", h.winpeImage)
@@ -211,6 +230,7 @@ func serve() {
 	// Operator API (OIDC-authenticated).
 	pub.Route("/api/v1", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
+		r.Use(reg.Middleware("operator_api"))
 		if h.verifier != nil {
 			r.Use(auth.Middleware(h.verifier))
 		}
@@ -235,6 +255,7 @@ func serve() {
 		r.Post("/catalog/install", h.installFromCatalog)
 		r.Get("/jobs", h.listJobs)
 		r.Get("/jobs/{id}", h.getJob)
+		r.Post("/jobs/{id}/cancel", h.cancelJob)
 		r.Get("/audit", h.queryAudit)
 		r.Post("/deployments/issue", h.issueDeployment)
 		r.Post("/bootstrap-sticks", h.registerStick)

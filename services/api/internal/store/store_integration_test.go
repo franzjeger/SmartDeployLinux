@@ -46,6 +46,7 @@ func openTestStore(t *testing.T) *Store {
 		"driver_match_rules", "driver_pack_versions", "driver_packs",
 		"machines",
 		"image_versions", "deployment_profiles", "images", "blobs",
+		"bootstrap_sticks", "user_roles", "users",
 	} {
 		if _, err := st.Pool().Exec(ctx, "DELETE FROM "+tbl); err != nil {
 			t.Fatalf("clean %s: %v", tbl, err)

@@ -23,6 +23,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/your-org/deployserver/api/internal/driverpack"
 )
 
 //go:embed migrations/*.sql
@@ -1256,6 +1258,186 @@ func (s *Store) LockExpiredAuthCodes(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// ReapExpiredOneShotTokens deletes one_shot_tokens that were consumed or
+// expired more than `older` ago. Keeps the table from growing unbounded.
+func (s *Store) ReapExpiredOneShotTokens(ctx context.Context, older time.Duration) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM one_shot_tokens
+		WHERE (consumed_at IS NOT NULL AND consumed_at < now() - $1::interval)
+		   OR (expires_at < now() - $1::interval)`,
+		older.String())
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// --- phone-home / job progression -------------------------------------
+
+// VerifyPhoneHomeToken checks — without consuming — that the hashed
+// token is live and bound to the given job, and that the job is not in
+// a terminal state. Installers phone home repeatedly across the whole
+// deployment, so the token stays valid until TransitionJob revokes it
+// at completion.
+func (s *Store) VerifyPhoneHomeToken(ctx context.Context, tokenHash string, jobID uuid.UUID) (machineID, profileID uuid.UUID, err error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT j.machine_id, j.profile_id
+		FROM one_shot_tokens t
+		JOIN deployment_jobs j ON j.auth_code_id = t.auth_code_id
+		WHERE t.token_hash = $1
+		  AND t.purpose IN ('boot','phone-home')
+		  AND t.consumed_at IS NULL
+		  AND t.expires_at > now()
+		  AND j.id = $2
+		  AND j.state IN ('pending','bootstrapped','imaging','post_install')`,
+		tokenHash, jobID)
+	if err := row.Scan(&machineID, &profileID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, uuid.Nil, ErrTokenInvalid
+		}
+		return uuid.Nil, uuid.Nil, err
+	}
+	return machineID, profileID, nil
+}
+
+// jobStatePath is the happy-path ordering of deployment states.
+var jobStatePath = []string{"pending", "bootstrapped", "imaging", "post_install", "completed"}
+
+// AdvanceJob moves a job to `to`, applying any intermediate happy-path
+// transitions required to get there (e.g. an installer whose first
+// report is "imaging" while the job still sits in "pending"). "failed"
+// and "cancelled" are reachable from any non-terminal state via
+// TransitionJob's graph. A no-op if the job is already at or past `to`.
+func (s *Store) AdvanceJob(ctx context.Context, jobID uuid.UUID, to string) error {
+	if to == "failed" || to == "cancelled" {
+		return s.TransitionJob(ctx, jobID, to)
+	}
+	targetIdx := -1
+	for i, st := range jobStatePath {
+		if st == to {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx < 0 {
+		return fmt.Errorf("unknown target state %q", to)
+	}
+	var cur string
+	row := s.pool.QueryRow(ctx, `SELECT state::text FROM deployment_jobs WHERE id = $1`, jobID)
+	if err := row.Scan(&cur); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	curIdx := -1
+	for i, st := range jobStatePath {
+		if st == cur {
+			curIdx = i
+			break
+		}
+	}
+	if curIdx < 0 {
+		return fmt.Errorf("job in terminal state %q", cur)
+	}
+	for i := curIdx + 1; i <= targetIdx; i++ {
+		if err := s.TransitionJob(ctx, jobID, jobStatePath[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// --- driver packs -----------------------------------------------------
+
+// MatchedDriverPack is a driver pack version selected for a machine,
+// with the blob key needed to build a download URL.
+type MatchedDriverPack struct {
+	VersionID  uuid.UUID `json:"version_id"`
+	Vendor     string    `json:"vendor"`
+	Model      string    `json:"model"`
+	VersionTag string    `json:"version_tag"`
+	BlobKey    string    `json:"blob_key"`
+}
+
+// MatchDriverPacks loads every driver pack version (with rules and blob
+// key) for the given OS family and runs the driverpack matcher over the
+// fingerprint. Results come back most-specific-first.
+func (s *Store) MatchDriverPacks(ctx context.Context, fp driverpack.Fingerprint) ([]MatchedDriverPack, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT pv.id, pv.pack_id, p.vendor, p.model, p.os_family, p.os_version,
+		       pv.version_tag, b.s3_key,
+		       COALESCE(r.match_type, ''), COALESCE(r.match_value, '')
+		FROM driver_pack_versions pv
+		JOIN driver_packs p ON p.id = pv.pack_id
+		JOIN blobs b ON b.id = pv.blob_id
+		LEFT JOIN driver_match_rules r ON r.pack_version_id = pv.id
+		WHERE lower(p.os_family) = lower($1)
+		ORDER BY pv.id`, fp.OSFamily)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type cand struct {
+		pv      driverpack.PackVersion
+		blobKey string
+	}
+	byID := map[uuid.UUID]*cand{}
+	var order []uuid.UUID
+	for rows.Next() {
+		var id, packID uuid.UUID
+		var vendor, model, osFamily, osVersion, versionTag, blobKey, rType, rValue string
+		if err := rows.Scan(&id, &packID, &vendor, &model, &osFamily, &osVersion,
+			&versionTag, &blobKey, &rType, &rValue); err != nil {
+			return nil, err
+		}
+		c, ok := byID[id]
+		if !ok {
+			c = &cand{pv: driverpack.PackVersion{
+				ID: id, PackID: packID, Vendor: vendor, Model: model,
+				OSFamily: osFamily, OSVersion: osVersion, VersionTag: versionTag,
+			}, blobKey: blobKey}
+			byID[id] = c
+			order = append(order, id)
+		}
+		if rType != "" {
+			c.pv.Rules = append(c.pv.Rules, driverpack.Rule{Type: rType, Value: rValue})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	candidates := make([]driverpack.PackVersion, 0, len(order))
+	for _, id := range order {
+		candidates = append(candidates, byID[id].pv)
+	}
+	selected := driverpack.Select(fp, candidates)
+	out := make([]MatchedDriverPack, 0, len(selected))
+	for _, pv := range selected {
+		out = append(out, MatchedDriverPack{
+			VersionID: pv.ID, Vendor: pv.Vendor, Model: pv.Model,
+			VersionTag: pv.VersionTag, BlobKey: byID[pv.ID].blobKey,
+		})
+	}
+	return out, nil
+}
+
+// RecordMachineInventory merges a hardware fingerprint reported by the
+// installer into machines.attributes and updates vendor/model if they
+// were unset. This gives operators auto-populated hardware inventory
+// from the first deployment onward.
+func (s *Store) RecordMachineInventory(ctx context.Context, machineID uuid.UUID, inventory []byte) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE machines
+		SET attributes = attributes || jsonb_build_object('hardware', $2::jsonb),
+		    vendor = COALESCE(vendor, $2::jsonb->>'dmi_vendor'),
+		    model  = COALESCE(model,  $2::jsonb->>'dmi_product')
+		WHERE id = $1`, machineID, inventory)
+	return err
 }
 
 // --- errors ----------------------------------------------------------

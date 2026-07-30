@@ -643,6 +643,8 @@ route("/jobs/:id", async ({ id }) => {
           <p class="subtitle mono small">${escapeHTML(j.id)}</p>
         </div>
         <div class="page-actions">
+          ${["pending","bootstrapped","imaging"].includes(j.state)
+            ? `<button class="btn danger" id="cancel-job-btn">Cancel deployment</button>` : ""}
           <a class="btn secondary" href="#/machines/${j.machine_id}">View machine</a>
         </div>
       </div>
@@ -680,6 +682,23 @@ route("/jobs/:id", async ({ id }) => {
 
   // Clean DOM if there were no events (we showed an "empty" message).
   if (events.length === 0) tlEl.innerHTML = "";
+
+  const cancelBtn = $("#cancel-job-btn");
+  if (cancelBtn) cancelBtn.addEventListener("click", async () => {
+    const ok = await confirmModal({
+      title: "Cancel deployment?",
+      message: "The job moves to cancelled and its boot tokens are revoked. A machine already imaging will fail its next server call.",
+      danger: true, primaryLabel: "Cancel deployment",
+    });
+    if (!ok) return;
+    try {
+      await api("POST", `/api/v1/jobs/${id}/cancel`);
+      toast("Deployment cancelled");
+      navigate();
+    } catch (e) {
+      toast("Cancel failed: " + e.message, "error");
+    }
+  });
 
   let es;
   if (typeof EventSource === "function") {

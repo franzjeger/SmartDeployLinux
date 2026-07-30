@@ -62,10 +62,12 @@ func (b *Broker) Routes() http.Handler {
 		r.With(httprate.LimitByIP(10, time.Minute)).
 			Post("/redeem", b.handleRedeem)
 
-		// Authenticated by API: operator UI calls here through internal
-		// service auth (mTLS or trusted-network header). For now we
-		// gate by network — only the API service can hit this path.
-		r.Post("/issue-code", b.handleIssueCode)
+		// Authenticated by API: operator UI calls here through the API,
+		// which presents the shared secret in X-Internal-Auth. Without
+		// the secret configured, anything on the internal network could
+		// mint deployment codes — so require it unless explicitly
+		// running dev-mode.
+		r.With(b.requireInternalSecret).Post("/issue-code", b.handleIssueCode)
 	})
 
 	return r
@@ -179,9 +181,14 @@ func (b *Broker) handleRedeem(w http.ResponseWriter, r *http.Request) {
 
 	jobID, err := b.store.CreateDeploymentJob(ctx, consumed.MachineID, consumed.ProfileID, consumed.ID)
 	if err != nil {
+		// Without a job row, every job-scoped endpoint downstream fails
+		// with no operator-visible signal. Fail the redeem loudly instead;
+		// the minted authkey is ephemeral and self-expires.
 		slog.ErrorContext(ctx, "create job", "err", err)
-		// Don't fail the redeem — the audit log and authkey are already
-		// in flight. The job row can be reconstructed from the audit.
+		b.audit(ctx, "auth_code.redeem_failed", &consumed.ID, srcIP,
+			map[string]any{"reason": "job_create_failed"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server_error"})
+		return
 	}
 
 	// Mint a boot token bound to this auth_code. The chainload URL

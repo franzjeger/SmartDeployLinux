@@ -42,6 +42,12 @@ type Config struct {
 	DeployFQDN     string
 	APIInternalURL string
 
+	// IssueSharedSecret gates POST /issue-code. When set, callers must
+	// present it in X-Internal-Auth; when empty the broker logs a loud
+	// warning and accepts any caller on the internal network (dev-mode
+	// escape hatch, matching the API's OIDC fallback).
+	IssueSharedSecret string
+
 	// AuditFile, if set, receives one JSON line per audit event in
 	// addition to stdout. Append-only; intended to live on a volume the
 	// operator backs up separately from Postgres so a DB compromise
@@ -65,7 +71,8 @@ func FromEnv() (*Config, error) {
 		TailscaleTailnet: os.Getenv("TAILSCALE_TAILNET"),
 		DeployFQDN:       os.Getenv("DEPLOY_FQDN"),
 		APIInternalURL:   getenv("API_INTERNAL_URL", "http://api:8080"),
-		AuditFile:        os.Getenv("AUDIT_FILE"),
+		AuditFile:         os.Getenv("AUDIT_FILE"),
+		IssueSharedSecret: os.Getenv("AUTH_BROKER_ISSUE_SHARED_SECRET"),
 	}
 
 	var err error

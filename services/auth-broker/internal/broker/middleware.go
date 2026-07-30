@@ -2,10 +2,35 @@ package broker
 
 import (
 	"context"
+	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"time"
 )
+
+// requireInternalSecret gates internal-only endpoints (issue-code) on
+// the shared secret configured via AUTH_BROKER_ISSUE_SHARED_SECRET.
+// Constant-time comparison; 404 (not 401/403) on mismatch so probes
+// can't distinguish "wrong secret" from "no such route". When no secret
+// is configured we allow the call but log a warning once per request —
+// the dev-mode escape hatch, consistent with the API's OIDC fallback.
+func (b *Broker) requireInternalSecret(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secret := b.cfg.IssueSharedSecret
+		if secret == "" {
+			slog.WarnContext(r.Context(),
+				"AUTH_BROKER_ISSUE_SHARED_SECRET not set; /issue-code open to internal network (dev-mode)")
+			next.ServeHTTP(w, r)
+			return
+		}
+		got := r.Header.Get("X-Internal-Auth")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(secret)) != 1 {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func slogMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

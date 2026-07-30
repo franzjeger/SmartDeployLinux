@@ -198,6 +198,65 @@ top of doc for what would be required).
 (codes — 9 tests, driverpack — 9 tests, answerfile — 5 tests). End-to-end
 nested-KVM harness scaffolded in `tests/e2e/` but not authored.
 
+## Phase 12 — End-to-end correctness + hardening pass
+
+**Done.** A full-code audit found and fixed defects that made the deploy
+spine non-functional end-to-end, plus wired in the dormant Phase-5
+libraries. All verified by unit + Postgres-backed integration tests.
+
+### Correctness fixes (deploy spine)
+
+| Defect | Fix |
+|---|---|
+| Phone-home hashed tokens with plain sha256 while broker mints peppered hashes → every event 401'd | `appendDeploymentEvent` now uses `tokens.HashBootToken` |
+| Phone-home *consumed* the one-shot token on first event, breaking all later events | new non-consuming `store.VerifyPhoneHomeToken`, job-bound and terminal-state-gated |
+| First "imaging" report hit an invalid pending→imaging transition | new `store.AdvanceJob` walks intermediate happy-path states; iPXE fetch also advances pending→bootstrapped |
+| `OneShotToken` never populated in render responses → WinPE booted with empty bearer | `renderByToken` echoes the authenticated token |
+| Linux nocloud URL used the machine UUID (renders 410 at the token route) | templates now use `/boot/<token>/` |
+| iPXE templates used `html/template` (& → `&amp;`) and `\` line continuations (not iPXE syntax) | `text/template`, single-line commands; golden tests assert bootability |
+| Served `deploy.cmd` was a stub that `exit /b 1` | real script embedded via `go:embed`, sync-checked against `winpe/scripts/deploy.cmd` by test |
+| `image.wim` hardcoded to `/static/win11/install.wim` | resolved from the profile image's media / static convention |
+| Driver matcher + unattend renderer were dead code | wired: `store.MatchDriverPacks` (DB rules → `driverpack.Select`), `/plan` + `/drivers.zip` return matched packs, `/unattend.xml` renders through `answerfile.Render` |
+| `/plan` discarded the reported DMI/PCI fingerprint | persisted via `store.RecordMachineInventory` into `machines.attributes.hardware` (+ vendor/model backfill) |
+| Seeded admin could never link on first OIDC login (unique-email collision → 500) | resolver does a two-step upsert that adopts the seeded row |
+| Broker minted tokens after a failed job insert (orphaned deployments) | redeem now fails loudly if `CreateDeploymentJob` errors |
+| API `readSourceIP` split IPv6 on the first `:` | uses `net.SplitHostPort` |
+| compose/Caddyfile referenced a nonexistent `ui` service, wrong `http-boot-internal` hostname, mismatched `httpboot.pem` names, no caddy secrets mount | fixed; stack now describes only services that exist |
+
+### Security hardening
+
+- `?token=` query-string fallback removed for good (SECURITY.md §4 #2).
+- Broker `/issue-code` now requires `X-Internal-Auth` shared secret
+  (`AUTH_BROKER_ISSUE_SHARED_SECRET`, constant-time compare, 404 on
+  mismatch); the api injects it when proxying issuance.
+- RBAC checks added to previously-open read endpoints (profiles, images,
+  jobs, catalog); migration `0004` seeds `job.read` for operator/viewer.
+- Caddy → http-boot proxy now verifies the internal CA instead of
+  `tls_insecure_skip_verify`.
+
+### New capability
+
+- `POST /api/v1/jobs/{id}/cancel` + UI cancel button (revokes boot tokens).
+- `/readyz` (DB-gated readiness) and `/metrics` (Prometheus text format,
+  dependency-free `internal/metrics`) on the api.
+- Worker reaps consumed/expired `one_shot_tokens` (>24h).
+- Built-in autoinstall user-data now supports per-profile overrides
+  (`autoinstall`/`cloud-init` templates) and profile vars
+  (`username`, `password_hash`, `ssh_authorized_key`); ships a locked
+  password by default instead of the old `REPLACEME` literal.
+
+### New tests
+
+- `cmd/api`: bearer/query-string, IPv6 source IP, phase mapping,
+  user-data token injection, deploy.cmd sync (5 tests).
+- `http-boot/render`: iPXE bootability + token-datasource goldens (3).
+- `auth-broker/broker`: issue-code secret middleware (2).
+- `api/internal/metrics`: exposition + middleware (2).
+- Store integration (Postgres): phone-home token repeatability,
+  AdvanceJob, driver-pack matching via DB rules, inventory merge (4);
+  test harness now cleans `users`/`bootstrap_sticks` so the suite is
+  rerunnable against a persistent database.
+
 ## Phase 11 — Final docs
 **Done.**
 

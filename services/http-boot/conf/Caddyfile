@@ -35,21 +35,19 @@
     # rate limits — the deploy server's ingress is restricted to the tailnet
     # IP at the network level (operator chooses).
     handle /boot/* {
-        reverse_proxy http-boot-internal:8443 {
+        reverse_proxy http-boot:8443 {
             transport http {
                 tls
-                tls_insecure_skip_verify
+                tls_trust_pool file /secrets/internal-ca.pem
             }
         }
     }
 
-    # Authenticated UI + API.
-    handle /api/* {
-        reverse_proxy api:8080
-    }
-
+    # Authenticated UI + API. The operator UI is embedded in the api
+    # binary, so the api handles /, /assets/*, /api/*, and the
+    # phone-home /v1/* endpoints.
     handle {
-        reverse_proxy ui:3000
+        reverse_proxy api:8080
     }
 
     log {
@@ -63,9 +61,14 @@
 # tailnet-only endpoints.
 :8443 {
     bind 0.0.0.0
-    tls /secrets/httpboot.pem /secrets/httpboot-key.pem
+    tls /secrets/http-boot.pem /secrets/http-boot-key.pem
 
     handle /boot/* {
-        reverse_proxy http-boot-internal:8443
+        reverse_proxy http-boot:8443 {
+            transport http {
+                tls
+                tls_trust_pool file /secrets/internal-ca.pem
+            }
+        }
     }
 }
