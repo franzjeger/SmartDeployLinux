@@ -1,0 +1,31 @@
+{
+  "title": "deployserver",
+  "uid": "deployserver-main",
+  "schemaVersion": 39,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "timeseries", "title": "Request rate by group",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum by (group) (rate(http_requests_total[5m]))", "legendFormat": "{{group}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Error ratio (4xx+5xx / all)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1 } },
+      "targets": [{ "expr": "sum(rate(http_requests_total{status=~\"4xx|5xx\"}[5m])) / sum(rate(http_requests_total[5m]))", "legendFormat": "error ratio" }]
+    },
+    {
+      "type": "timeseries", "title": "Phone-home traffic (deployments in flight)",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum(rate(http_requests_total{group=\"phone_home\"}[5m]))", "legendFormat": "events/s" }]
+    },
+    {
+      "type": "timeseries", "title": "Mean request duration by group",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{ "expr": "sum by (group) (rate(http_request_seconds_total[5m])) / sum by (group) (rate(http_requests_total[5m]))", "legendFormat": "{{group}}" }]
+    }
+  ]
+}

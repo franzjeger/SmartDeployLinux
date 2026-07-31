@@ -103,8 +103,10 @@ jobs:
             ( cd "services/$svc" && gosec -severity high ./... ) || true
           done
 
-      - name: HA compose config validates
-        run: docker compose -f docker-compose.ha.yml config -q
+      - name: HA + observability compose configs validate
+        run: |
+          docker compose -f docker-compose.ha.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.observability.yml config -q
         env:
           POSTGRES_HOST: pg.example.com
           POSTGRES_USER: x

@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+scrape_configs:
+  # The api's dependency-free /metrics exporter (Phase 12): request
+  # counters by group/method/status class + total handling seconds.
+  - job_name: deployserver-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8080"]

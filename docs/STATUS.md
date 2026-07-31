@@ -664,6 +664,34 @@ zero-touch preserved.
   `LookupRenderBundleByToken`), and an e2e menu → deploy → token →
   render flow incl. locked-mode refusal (8 e2e scenarios).
 
+## Phase 24 — Old-debt payoff
+
+**Done.** Every remaining "deferred/not delivered" item from Phases 3–8:
+
+- **`deployctl auth login`** (flagged "not yet implemented" since
+  Phase 8): OIDC device-authorization flow (RFC 8628) — discovers
+  issuer/client-id from the server's pre-auth `/api/v1/auth/config`,
+  polls the token endpoint (handles `authorization_pending` /
+  `slow_down`), caches the ID token at
+  `~/.config/deployctl/token` (0600). The client uses the cache
+  automatically; `DEPLOY_API_TOKEN` still overrides. Plus `auth status`
+  / `auth logout`. Tested end-to-end against a fake IdP (pending→token,
+  cache mode 0600, client pickup).
+- **`winpe/scripts/build-boot-wim.ps1`** (Phase 5 known issue #1):
+  full ADK build script — copype, mount, WinPE OCs (WMI, NetFx,
+  Scripting, PowerShell, SecureStartup, EnhancedStorage + en-us packs),
+  installs startnet.cmd and the pinned deploy CA, sets scratch space,
+  commit + export with max compression, prints the sha256. Requires a
+  Windows host with the ADK (untestable here; error handling discards
+  the mount on failure).
+- **`docker-compose.observability.yml`** (deferred since Phase 3):
+  Prometheus (30 d retention) scraping the api's `/metrics` + Grafana
+  pre-provisioned with the datasource and a deployserver dashboard
+  (request rate by group, error ratio, phone-home traffic, mean
+  duration by group). Overlay-validated in CI.
+- **`docker-bake.hcl`** (deferred since Phase 3): buildx bake targets
+  for all six service images; edge-agent multi-arch (amd64+arm64).
+
 ## Phase 11 — Final docs
 **Done.**
 
