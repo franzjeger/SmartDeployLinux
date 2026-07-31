@@ -692,6 +692,21 @@ zero-touch preserved.
 - **`docker-bake.hcl`** (deferred since Phase 3): buildx bake targets
   for all six service images; edge-agent multi-arch (amd64+arm64).
 
+## Phase 25 — Field-test runbook
+
+**Done.** `docs/FIELD_TEST.md`: the ordered validation protocol for
+everything the sandbox could not exercise — 11 test suites (FT-1…FT-11)
+covering server bring-up, live Headscale redemption, real USB stick
+boot, Linux zero-touch, golden capture/restore (UEFI/plain, BIOS/LVM),
+the ADK WinPE build + Windows deploy with driver injection, Windows
+capture, the interactive PXE menu (locked/open/fallback), the edge
+agent (PXE, verified mirror incl. a tamper check, wake-on-LAN),
+reporting/notifications/observability, and a security spot-check table
+(token replay, broker/edge auth, RBAC, last-admin guard, no tokens in
+access logs). Each test lists prerequisites, expected results, failure
+triage pointers, and evidence to capture; a results-record template
+closes the doc.
+
 ## Phase 11 — Final docs
 **Done.**
 
