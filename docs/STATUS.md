@@ -714,6 +714,25 @@ closes the doc.
 deployctl images via a `VERSION` build arg (Dockerfiles + bake);
 `v1.0.0` tag + GitHub release.
 
+## Phase 27 — OpenAPI contract + API reference
+
+**Done.**
+
+- Hand-written OpenAPI 3.1 spec (`internal/apispec/openapi.yaml`, embedded)
+  for the whole operator `/api/v1` surface: 50 operations across 13
+  tags, with request/response schemas, RBAC notes, and reusable
+  components. Served at **`GET /api/openapi.yaml`** (public) for
+  tooling (openapi-generator, Postman, etc.).
+- **`GET /api/docs`**: a self-contained HTML API reference rendered
+  from the embedded spec at request time — grouped by tag, colored
+  method badges, path + summary + the RBAC note. No CDN (works
+  air-gapped on a tailnet). Linked from the UI nav.
+- **Contract test** (`apispec_contract_test.go`): walks the real
+  operator router (factored into `registerOperatorRoutes`) and asserts
+  an EXACT bijection with the spec's documented paths+methods — the
+  spec cannot silently drift from the code. Plus a spec-validity check.
+- New dep: `gopkg.in/yaml.v3` (spec parsing for the docs renderer).
+
 ## Phase 11 — Final docs
 **Done.**
 
