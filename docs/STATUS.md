@@ -579,6 +579,32 @@ fan out across api replicas.
   scenario streaming a live phone-home over SSE through the Postgres
   hop (7 e2e scenarios total).
 
+## Phase 21 — BIOS + LVM layouts in Linux golden restore
+
+**Done.** Removes the two v1 restrictions on Phase 19's restore path.
+
+- **Boot mode auto-detected on the target**: UEFI (ESP + GRUB
+  x86_64-efi `--removable`) when `/sys/firmware/efi` exists; legacy
+  BIOS otherwise (GPT with a 2 MiB BIOS boot partition + GRUB
+  i386-pc). No configuration needed — the same golden image deploys to
+  either firmware.
+- **Layout from profile vars** (`answer_file_vars`): `restore_layout`
+  plain (default) | lvm; lvm adds `restore_vg` (default vg0) and
+  optional `restore_swap` (e.g. "8G") for a swap LV; root LV takes the
+  remaining space. fstab covers root/ESP/swap with fresh UUIDs.
+- **Initramfs regeneration** after restore (`update-initramfs` /
+  `dracut`, best-effort) so LVM modules and storage drivers match the
+  *target* hardware and layout — the hardware-independence step when
+  target differs from the golden source.
+- Server: `restoreLayoutEnv` threads the profile vars into the restore
+  cloud-init as shell exports, whitelisted to safe characters (the
+  values land inside a shell script; injection attempts are dropped,
+  tested).
+- Tests: layout-env unit matrix incl. injection cases, restore.sh
+  content assertions (i386-pc/efi, lvm, initramfs), e2e extended —
+  default profile exports plain, an LVM profile exports
+  `DEPLOY_LAYOUT=lvm DEPLOY_VG=... DEPLOY_SWAP=...`.
+
 ## Phase 11 — Final docs
 **Done.**
 

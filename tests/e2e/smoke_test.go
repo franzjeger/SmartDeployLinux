@@ -566,6 +566,28 @@ func TestLinuxGoldenRestoreUserData(t *testing.T) {
 		t.Fatalf("restore.sh fetch: %d", status)
 	}
 
+	// Default profile → plain layout exported.
+	if !strings.Contains(string(ud), "DEPLOY_LAYOUT=plain") {
+		t.Fatalf("default layout missing:\n%s", ud)
+	}
+
+	// An LVM profile threads layout vars into the restore environment.
+	if _, err := h.db.Exec(ctx, `
+		UPDATE deployment_profiles
+		SET answer_file_vars = '{"restore_layout":"lvm","restore_vg":"vg_sys","restore_swap":"4G"}'::jsonb
+		WHERE id = $1`, profileID); err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.Get(h.base + "/internal/render/by-token/" + token + "/user-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	udLVM, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(udLVM), "DEPLOY_LAYOUT=lvm DEPLOY_VG=vg_sys DEPLOY_SWAP=4G") {
+		t.Fatalf("lvm layout env missing:\n%s", udLVM)
+	}
+
 	// …but a CAPTURE job on the same golden image must still capture
 	// (branch order: capture wins), and its token must not pull restore.sh.
 	capToken, capJobID := h.seedRedeem(machineID, profileID, "capture", imageID)

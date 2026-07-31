@@ -299,7 +299,8 @@ func (h *handlers) writeUserData(w http.ResponseWriter, r *http.Request, bundle 
 		archiveURL := h.goldenArchiveURL(r.Context(), bundle)
 		w.Header().Set("Content-Type", "text/cloud-config")
 		fmt.Fprintf(w, linuxRestoreUserDataTpl,
-			h.publicURL, jobID, tok, archiveURL, host, h.publicURL, jobID)
+			h.publicURL, jobID, tok, archiveURL, host,
+			restoreLayoutEnv(bundle.ProfileVars), h.publicURL, jobID)
 		return
 	}
 
@@ -418,16 +419,52 @@ autoinstall:
 
 // linuxRestoreUserDataTpl boots a live environment straight into the
 // golden-image restore script. Args: publicURL, jobID, token,
-// archiveURL, hostname, publicURL, jobID.
+// archiveURL, hostname, layoutEnv, publicURL, jobID.
 const linuxRestoreUserDataTpl = `#cloud-config
 runcmd:
   - |
     export DEPLOY_API=%s DEPLOY_JOB=%s DEPLOY_TOKEN=%s
     export DEPLOY_ARCHIVE_URL='%s' DEPLOY_HOSTNAME=%s
+    %s
     curl -sf -H "Authorization: Bearer $DEPLOY_TOKEN" \
       %s/v1/jobs/%s/restore.sh -o /run/restore.sh \
       && sh /run/restore.sh
 `
+
+// restoreLayoutEnv turns the profile's restore vars into shell exports
+// for restore.sh. Recognized answer-file vars: restore_layout
+// (plain|lvm), restore_vg, restore_swap (e.g. "8G"). Values are
+// whitelisted to safe characters — they land inside a shell script.
+func restoreLayoutEnv(profileVars []byte) string {
+	var vars struct {
+		Layout string `json:"restore_layout"`
+		VG     string `json:"restore_vg"`
+		Swap   string `json:"restore_swap"`
+	}
+	if len(profileVars) > 0 {
+		_ = json.Unmarshal(profileVars, &vars)
+	}
+	safe := func(s string) bool {
+		for _, c := range s {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+				c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.') {
+				return false
+			}
+		}
+		return s != ""
+	}
+	out := "export DEPLOY_LAYOUT=plain"
+	if vars.Layout == "lvm" {
+		out = "export DEPLOY_LAYOUT=lvm"
+		if safe(vars.VG) {
+			out += " DEPLOY_VG=" + vars.VG
+		}
+		if safe(vars.Swap) {
+			out += " DEPLOY_SWAP=" + vars.Swap
+		}
+	}
+	return out
+}
 
 // linuxCaptureUserDataTpl boots a live environment straight into the
 // capture script. Args: publicURL, jobID, token, publicURL, jobID.

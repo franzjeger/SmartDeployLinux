@@ -15,6 +15,10 @@ func TestRestoreShMatchesCanonical(t *testing.T) {
 	for _, want := range []string{
 		"DEPLOY_ARCHIVE_URL", "grub-install", "machine-id", "ssh-keygen -A",
 		"Authorization: Bearer", "fstab",
+		// Phase 21: BIOS + LVM support.
+		"i386-pc", "x86_64-efi", "/sys/firmware/efi",
+		"vgcreate", "lvcreate", "mkswap",
+		"update-initramfs", "dracut",
 	} {
 		if !strings.Contains(restoreShBody, want) {
 			t.Fatalf("restore.sh missing %q", want)
@@ -56,6 +60,36 @@ func TestIsLinuxGolden(t *testing.T) {
 	for _, tc := range cases {
 		if got := isLinuxGolden(tc.b); got != tc.want {
 			t.Fatalf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRestoreLayoutEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		vars string
+		want string
+	}{
+		{"default", "", "export DEPLOY_LAYOUT=plain"},
+		{"explicit plain", `{"restore_layout":"plain"}`, "export DEPLOY_LAYOUT=plain"},
+		{"lvm defaults", `{"restore_layout":"lvm"}`, "export DEPLOY_LAYOUT=lvm"},
+		{"lvm full", `{"restore_layout":"lvm","restore_vg":"vg_sys","restore_swap":"8G"}`,
+			"export DEPLOY_LAYOUT=lvm DEPLOY_VG=vg_sys DEPLOY_SWAP=8G"},
+		// Injection attempts and junk are dropped, not quoted-through:
+		// these strings land inside a shell script.
+		{"injection vg", `{"restore_layout":"lvm","restore_vg":"vg0; rm -rf /"}`,
+			"export DEPLOY_LAYOUT=lvm"},
+		{"injection swap", `{"restore_layout":"lvm","restore_swap":"$(reboot)"}`,
+			"export DEPLOY_LAYOUT=lvm"},
+		{"unknown layout falls back", `{"restore_layout":"zfs"}`, "export DEPLOY_LAYOUT=plain"},
+	}
+	for _, tc := range cases {
+		var vars []byte
+		if tc.vars != "" {
+			vars = []byte(tc.vars)
+		}
+		if got := restoreLayoutEnv(vars); got != tc.want {
+			t.Fatalf("%s: got %q want %q", tc.name, got, tc.want)
 		}
 	}
 }
