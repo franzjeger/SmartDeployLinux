@@ -5,8 +5,10 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -493,6 +495,69 @@ func TestRenderBundleCarriesBlobBucketAndSHA(t *testing.T) {
 	if bundle.ImageBlobKey == "" || bundle.ImageBlobBucket == "" || bundle.ImageBlobSHA == "" {
 		t.Fatalf("bundle blob fields empty: key=%q bucket=%q sha=%q",
 			bundle.ImageBlobKey, bundle.ImageBlobBucket, bundle.ImageBlobSHA)
+	}
+}
+
+func TestReportQueries(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	// Two completed (10m + 20m), one failed, one live.
+	_, _, j1 := fixtureJob(t, st, "sha256:rep1", "completed")
+	_, _, j2 := fixtureJob(t, st, "sha256:rep2", "completed")
+	_, _, j3 := fixtureJob(t, st, "sha256:rep3", "failed")
+	_, _, _ = fixtureJob(t, st, "sha256:rep4", "imaging")
+	for jid, mins := range map[uuid.UUID]int{j1: 10, j2: 20, j3: 5} {
+		_, err := st.Pool().Exec(ctx, `
+			UPDATE deployment_jobs
+			SET started_at = now() - make_interval(mins => $2), finished_at = now()
+			WHERE id = $1`, jid, mins)
+		must(t, err)
+	}
+
+	sum, err := st.GetReportSummary(ctx, 24*time.Hour)
+	must(t, err)
+	if sum.Total != 4 || sum.Completed != 2 || sum.Failed != 1 || sum.Active != 1 {
+		t.Fatalf("summary: %+v", sum)
+	}
+	if sum.SuccessRate < 0.66 || sum.SuccessRate > 0.67 {
+		t.Fatalf("success rate: %v", sum.SuccessRate)
+	}
+	// Avg of 10m and 20m completed durations = 900s.
+	if sum.AvgDurationSecs < 850 || sum.AvgDurationSecs > 950 {
+		t.Fatalf("avg duration: %v", sum.AvgDurationSecs)
+	}
+
+	daily, err := st.GetReportDaily(ctx, 14)
+	must(t, err)
+	if len(daily) != 14 {
+		t.Fatalf("daily rows: %d, want 14 (zero-filled)", len(daily))
+	}
+	today := daily[len(daily)-1]
+	if today.Completed != 2 || today.Failed != 1 {
+		t.Fatalf("today: %+v", today)
+	}
+
+	byProf, err := st.GetReportByProfile(ctx, 24*time.Hour)
+	must(t, err)
+	if len(byProf) == 0 {
+		t.Fatal("no profile groups")
+	}
+
+	bySite, err := st.GetReportBySite(ctx, 24*time.Hour)
+	must(t, err)
+	if len(bySite) != 1 || bySite[0].Name != "default" {
+		t.Fatalf("site groups: %+v", bySite)
+	}
+
+	var csvBuf bytes.Buffer
+	must(t, st.StreamJobsCSV(ctx, &csvBuf, 24*time.Hour))
+	lines := strings.Split(strings.TrimSpace(csvBuf.String()), "\n")
+	if len(lines) != 5 { // header + 4 jobs
+		t.Fatalf("csv lines: %d\n%s", len(lines), csvBuf.String())
+	}
+	if !strings.HasPrefix(lines[0], "job_id,machine,profile,kind,state") {
+		t.Fatalf("csv header: %s", lines[0])
 	}
 }
 

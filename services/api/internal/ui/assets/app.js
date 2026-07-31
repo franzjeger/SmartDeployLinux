@@ -401,14 +401,85 @@ function setBreadcrumb(parts) {
 
 // ---------- views: Dashboard ----------
 
+// ---------- report chart ----------
+//
+// Stacked daily-outcome columns. Colors validated (dataviz six checks,
+// dark surface #0d1117): completed #4493e6, failed #f85149 — the
+// ok-green/err-red pair is CVD-inseparable (ΔE 2.2 deutan) so the
+// chart uses blue for completed; the legend + native tooltips carry
+// identity so color is never the only channel. One axis; 2px surface
+// gaps between and within stacks; recessive baseline; text in text
+// tokens.
+const CHART_COMPLETED = "#4493e6";
+const CHART_FAILED = "#f85149";
+
+function dailyOutcomeChart(days) {
+  const W = 660, H = 150, PAD_B = 18, PAD_T = 8, GAP = 2;
+  const n = days.length;
+  if (!n) return `<div class="muted small">No data.</div>`;
+  const max = Math.max(1, ...days.map(d => d.completed + d.failed));
+  const colW = Math.floor((W - (n - 1) * GAP) / n);
+  const plotH = H - PAD_B - PAD_T;
+  const bars = days.map((d, i) => {
+    const x = i * (colW + GAP);
+    const ch = Math.round(d.completed / max * plotH);
+    const fh = Math.round(d.failed / max * plotH);
+    const total = d.completed + d.failed;
+    const tip = `${d.day}\ncompleted: ${d.completed}\nfailed: ${d.failed}`;
+    let out = `<g>` +
+      `<title>${escapeHTML(tip)}</title>` +
+      // hover hit target spanning the full column height
+      `<rect x="${x}" y="${PAD_T}" width="${colW}" height="${plotH}" fill="transparent"/>`;
+    if (ch > 0) {
+      out += `<rect x="${x}" y="${PAD_T + plotH - ch}" width="${colW}" height="${ch}" rx="2" fill="${CHART_COMPLETED}"/>`;
+    }
+    if (fh > 0) {
+      const fy = PAD_T + plotH - ch - fh - (ch > 0 ? GAP : 0);
+      out += `<rect x="${x}" y="${Math.max(PAD_T, fy)}" width="${colW}" height="${fh}" rx="2" fill="${CHART_FAILED}"/>`;
+    }
+    if (total === 0) {
+      out += `<rect x="${x}" y="${PAD_T + plotH - 1}" width="${colW}" height="1" fill="var(--border)"/>`;
+    }
+    // Sparse date labels: first, last, and every ~4th.
+    if (i === 0 || i === n - 1 || i % 4 === 0) {
+      out += `<text x="${x + colW / 2}" y="${H - 4}" text-anchor="middle" font-size="9" fill="var(--text)" opacity="0.7">${escapeHTML(d.day.slice(5))}</text>`;
+    }
+    return out + `</g>`;
+  }).join("");
+  return `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;" role="img"
+         aria-label="Deployments per day: completed and failed">
+      <line x1="0" y1="${PAD_T + plotH}" x2="${W}" y2="${PAD_T + plotH}" stroke="var(--border)" stroke-width="1"/>
+      ${bars}
+    </svg>
+    <div class="small" style="display:flex;gap:16px;margin-top:6px;">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${CHART_COMPLETED};margin-right:6px;"></span>completed</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${CHART_FAILED};margin-right:6px;"></span>failed</span>
+      <span class="muted">peak ${Math.max(...days.map(d => d.completed + d.failed))}/day</span>
+    </div>`;
+}
+
+const fmtDuration = secs => {
+  if (!secs || secs <= 0) return "—";
+  if (secs < 90) return Math.round(secs) + "s";
+  if (secs < 5400) return Math.round(secs / 60) + "m";
+  return (secs / 3600).toFixed(1) + "h";
+};
+
+let reportWindow = "7d";
+
 route("/", async () => {
   setBreadcrumb([{label: "Dashboard"}]);
-  const [machines, jobs, audit, profiles, images] = await Promise.all([
+  const [machines, jobs, audit, profiles, images, summary, daily, byProfile, bySite] = await Promise.all([
     api("GET", "/api/v1/machines").catch(() => []),
     api("GET", "/api/v1/jobs?limit=10").catch(() => []),
     api("GET", "/api/v1/audit?since=24h&limit=10").catch(() => []),
     api("GET", "/api/v1/profiles").catch(() => []),
     api("GET", "/api/v1/images").catch(() => []),
+    api("GET", `/api/v1/reports/summary?since=${reportWindow}`).catch(() => null),
+    api("GET", "/api/v1/reports/daily?days=14").catch(() => []),
+    api("GET", `/api/v1/reports/by-profile?since=${reportWindow}`).catch(() => []),
+    api("GET", `/api/v1/reports/by-site?since=${reportWindow}`).catch(() => []),
   ]);
 
   const liveJobs = jobs.filter(j => ["pending","bootstrapped","imaging","post_install"].includes(j.state));
@@ -430,6 +501,52 @@ route("/", async () => {
         <div class="card compact"><h3>Images</h3><div class="stat">${images.length}</div><div class="stat-sub">in library</div></div>
         <div class="card compact"><h3>Profiles</h3><div class="stat">${profiles.length}</div><div class="stat-sub">configured</div></div>
       </div>
+
+      ${summary ? `
+      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Reports — last ${escapeHTML(reportWindow)}</span>
+        <span style="font-weight:normal;text-transform:none;letter-spacing:0;">
+          ${["24h","7d","30d","90d"].map(win => `
+            <a class="chip ${reportWindow === win ? "active" : ""}" href="#" data-window="${win}">${win}</a>`).join(" ")}
+          <a class="btn small secondary" href="/api/v1/reports/jobs.csv?since=${escapeHTML(reportWindow)}" download style="margin-left:8px;">Export CSV</a>
+        </span>
+      </div>
+      <div class="cards">
+        <div class="card compact"><h3>Deployments</h3><div class="stat">${summary.total}</div><div class="stat-sub">${summary.captures} captures</div></div>
+        <div class="card compact"><h3>Success rate</h3>
+          <div class="stat">${summary.completed + summary.failed ? Math.round(summary.success_rate * 100) + "%" : "—"}</div>
+          <div class="stat-sub">${summary.completed} ok · ${summary.failed} failed</div></div>
+        <div class="card compact"><h3>Avg duration</h3><div class="stat">${fmtDuration(summary.avg_duration_secs)}</div><div class="stat-sub">completed deploys</div></div>
+        <div class="card compact"><h3>Active now</h3><div class="stat">${summary.active}</div><div class="stat-sub">in flight</div></div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h3 style="margin-top:0;">Outcomes per day (last 14 days)</h3>
+        ${dailyOutcomeChart(daily)}
+      </div>
+
+      <div class="split" style="margin-top:12px;">
+        <div class="card">
+          <h3 style="margin-top:0;">By profile</h3>
+          ${byProfile.length ? `<table><thead><tr><th>Profile</th><th>Total</th><th>OK</th><th>Failed</th><th>Avg</th></tr></thead><tbody>
+            ${byProfile.map(g => `<tr class="no-hover">
+              <td>${escapeHTML(g.name)}</td><td>${g.total}</td>
+              <td>${g.completed}</td><td>${g.failed ? `<span class="badge err"><span class="dot"></span>${g.failed}</span>` : "0"}</td>
+              <td class="mono small">${fmtDuration(g.avg_duration_secs)}</td>
+            </tr>`).join("")}
+          </tbody></table>` : `<div class="muted small">No deployments in window.</div>`}
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">By site</h3>
+          ${bySite.length ? `<table><thead><tr><th>Site</th><th>Total</th><th>OK</th><th>Failed</th><th>Avg</th></tr></thead><tbody>
+            ${bySite.map(g => `<tr class="no-hover">
+              <td>${escapeHTML(g.name)}</td><td>${g.total}</td>
+              <td>${g.completed}</td><td>${g.failed ? `<span class="badge err"><span class="dot"></span>${g.failed}</span>` : "0"}</td>
+              <td class="mono small">${fmtDuration(g.avg_duration_secs)}</td>
+            </tr>`).join("")}
+          </tbody></table>` : `<div class="muted small">No deployments in window.</div>`}
+        </div>
+      </div>` : ""}
 
       <div class="split" style="margin-top: 24px;">
         <div>
@@ -461,6 +578,12 @@ route("/", async () => {
         </div>
       </div>
     </div>`;
+
+  $$("#content [data-window]").forEach(chip => chip.addEventListener("click", e => {
+    e.preventDefault();
+    reportWindow = chip.dataset.window;
+    navigate();
+  }));
 
   if (liveJobs.length) {
     const t = setTimeout(navigate, 5000);

@@ -10,7 +10,9 @@ package store
 import (
 	"context"
 	"embed"
+	"encoding/csv"
 	"encoding/json"
+	"io"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -2016,6 +2018,192 @@ func (s *Store) CountOtherAdmins(ctx context.Context, excludeUser uuid.UUID) (in
 		JOIN roles r ON r.id = ur.role_id
 		WHERE r.name = 'admin' AND ur.user_id <> $1`, excludeUser).Scan(&n)
 	return n, err
+}
+
+// --- reporting --------------------------------------------------------
+
+type ReportSummary struct {
+	Window          string  `json:"window"`
+	Total           int     `json:"total"`
+	Completed       int     `json:"completed"`
+	Failed          int     `json:"failed"`
+	Cancelled       int     `json:"cancelled"`
+	Active          int     `json:"active"`
+	Captures        int     `json:"captures"`
+	SuccessRate     float64 `json:"success_rate"` // completed / (completed+failed), 0 when no terminals
+	AvgDurationSecs float64 `json:"avg_duration_secs"`
+	MachinesTotal   int     `json:"machines_total"`
+	ImagesTotal     int     `json:"images_total"`
+}
+
+// GetReportSummary aggregates deployment_jobs created within the window.
+func (s *Store) GetReportSummary(ctx context.Context, since time.Duration) (*ReportSummary, error) {
+	r := &ReportSummary{Window: since.String()}
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*),
+		       count(*) FILTER (WHERE state = 'completed'),
+		       count(*) FILTER (WHERE state = 'failed'),
+		       count(*) FILTER (WHERE state = 'cancelled'),
+		       count(*) FILTER (WHERE state IN ('pending','bootstrapped','imaging','post_install')),
+		       count(*) FILTER (WHERE kind = 'capture'),
+		       COALESCE(EXTRACT(EPOCH FROM avg(finished_at - started_at)
+		                FILTER (WHERE state = 'completed' AND started_at IS NOT NULL)), 0)
+		FROM deployment_jobs
+		WHERE created_at > now() - $1::interval`, since.String()).
+		Scan(&r.Total, &r.Completed, &r.Failed, &r.Cancelled, &r.Active,
+			&r.Captures, &r.AvgDurationSecs)
+	if err != nil {
+		return nil, err
+	}
+	if terminals := r.Completed + r.Failed; terminals > 0 {
+		r.SuccessRate = float64(r.Completed) / float64(terminals)
+	}
+	if err := s.pool.QueryRow(ctx,
+		`SELECT (SELECT count(*) FROM machines), (SELECT count(*) FROM images)`).
+		Scan(&r.MachinesTotal, &r.ImagesTotal); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+type ReportDay struct {
+	Day       string `json:"day"` // YYYY-MM-DD (UTC)
+	Completed int    `json:"completed"`
+	Failed    int    `json:"failed"`
+}
+
+// GetReportDaily returns terminal outcomes per UTC day for the last N
+// days, zero-filled so charts get a continuous axis.
+func (s *Store) GetReportDaily(ctx context.Context, days int) ([]ReportDay, error) {
+	if days <= 0 || days > 90 {
+		days = 14
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT to_char(d.day, 'YYYY-MM-DD'),
+		       COALESCE(count(j.id) FILTER (WHERE j.state = 'completed'), 0),
+		       COALESCE(count(j.id) FILTER (WHERE j.state = 'failed'), 0)
+		FROM generate_series(
+		         date_trunc('day', now() AT TIME ZONE 'utc') - ($1 - 1) * interval '1 day',
+		         date_trunc('day', now() AT TIME ZONE 'utc'),
+		         interval '1 day') AS d(day)
+		LEFT JOIN deployment_jobs j
+		       ON date_trunc('day', j.finished_at AT TIME ZONE 'utc') = d.day
+		      AND j.state IN ('completed','failed')
+		GROUP BY d.day
+		ORDER BY d.day`, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReportDay
+	for rows.Next() {
+		var d ReportDay
+		if err := rows.Scan(&d.Day, &d.Completed, &d.Failed); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+type ReportGroup struct {
+	Name            string  `json:"name"`
+	Total           int     `json:"total"`
+	Completed       int     `json:"completed"`
+	Failed          int     `json:"failed"`
+	AvgDurationSecs float64 `json:"avg_duration_secs"`
+}
+
+// GetReportByProfile breaks the window's jobs down per profile.
+func (s *Store) GetReportByProfile(ctx context.Context, since time.Duration) ([]ReportGroup, error) {
+	return s.reportGroups(ctx, `
+		SELECT p.name, count(*),
+		       count(*) FILTER (WHERE j.state = 'completed'),
+		       count(*) FILTER (WHERE j.state = 'failed'),
+		       COALESCE(EXTRACT(EPOCH FROM avg(j.finished_at - j.started_at)
+		                FILTER (WHERE j.state = 'completed' AND j.started_at IS NOT NULL)), 0)
+		FROM deployment_jobs j
+		JOIN deployment_profiles p ON p.id = j.profile_id
+		WHERE j.created_at > now() - $1::interval
+		GROUP BY p.name
+		ORDER BY count(*) DESC
+		LIMIT 20`, since)
+}
+
+// GetReportBySite breaks the window's jobs down per machine site.
+func (s *Store) GetReportBySite(ctx context.Context, since time.Duration) ([]ReportGroup, error) {
+	return s.reportGroups(ctx, `
+		SELECT COALESCE(NULLIF(m.attributes->>'site', ''), 'default'), count(*),
+		       count(*) FILTER (WHERE j.state = 'completed'),
+		       count(*) FILTER (WHERE j.state = 'failed'),
+		       COALESCE(EXTRACT(EPOCH FROM avg(j.finished_at - j.started_at)
+		                FILTER (WHERE j.state = 'completed' AND j.started_at IS NOT NULL)), 0)
+		FROM deployment_jobs j
+		JOIN machines m ON m.id = j.machine_id
+		WHERE j.created_at > now() - $1::interval
+		GROUP BY 1
+		ORDER BY count(*) DESC
+		LIMIT 20`, since)
+}
+
+func (s *Store) reportGroups(ctx context.Context, query string, since time.Duration) ([]ReportGroup, error) {
+	rows, err := s.pool.Query(ctx, query, since.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReportGroup
+	for rows.Next() {
+		var g ReportGroup
+		if err := rows.Scan(&g.Name, &g.Total, &g.Completed, &g.Failed, &g.AvgDurationSecs); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// StreamJobsCSV writes a flat CSV of the window's jobs to w.
+func (s *Store) StreamJobsCSV(ctx context.Context, w io.Writer, since time.Duration) error {
+	rows, err := s.pool.Query(ctx, `
+		SELECT j.id, COALESCE(m.asset_tag, j.machine_id::text), p.name,
+		       j.kind, j.state::text,
+		       to_char(j.created_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		       COALESCE(to_char(j.finished_at AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), ''),
+		       COALESCE(EXTRACT(EPOCH FROM j.finished_at - j.started_at)::bigint, 0),
+		       COALESCE(NULLIF(m.attributes->>'site',''), 'default')
+		FROM deployment_jobs j
+		JOIN machines m ON m.id = j.machine_id
+		JOIN deployment_profiles p ON p.id = j.profile_id
+		WHERE j.created_at > now() - $1::interval
+		ORDER BY j.created_at DESC`, since.String())
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	cw := csv.NewWriter(w)
+	if err := cw.Write([]string{
+		"job_id", "machine", "profile", "kind", "state",
+		"created_at", "finished_at", "duration_secs", "site"}); err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id, machine, profile, kind, state, created, finished, site string
+		var dur int64
+		if err := rows.Scan(&id, &machine, &profile, &kind, &state,
+			&created, &finished, &dur, &site); err != nil {
+			return err
+		}
+		if err := cw.Write([]string{id, machine, profile, kind, state,
+			created, finished, fmt.Sprintf("%d", dur), site}); err != nil {
+			return err
+		}
+	}
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		return err
+	}
+	return rows.Err()
 }
 
 // --- errors ----------------------------------------------------------

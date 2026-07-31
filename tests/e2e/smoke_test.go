@@ -327,6 +327,22 @@ func TestDeploySpineEndToEnd(t *testing.T) {
 		t.Fatalf("phone-home accepted a dead token: %d", status)
 	}
 
+	// --- reporting layer sees the completed job ----------------------
+	status, sum := h.call("GET", "/api/v1/reports/summary?since=24h", "", nil)
+	h.must(status, 200, sum, "report summary")
+	if c, _ := sum["completed"].(float64); c < 1 {
+		t.Fatalf("summary missed the completed job: %v", sum)
+	}
+	csvResp, err := http.Get(h.base + "/api/v1/reports/jobs.csv?since=24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	csvBody, _ := io.ReadAll(csvResp.Body)
+	csvResp.Body.Close()
+	if csvResp.StatusCode != 200 || !strings.Contains(string(csvBody), jobID) {
+		t.Fatalf("csv export missing job (status %d):\n%.500s", csvResp.StatusCode, csvBody)
+	}
+
 	// --- observability rode along ------------------------------------
 	mResp, err := http.Get(h.base + "/metrics")
 	if err != nil {

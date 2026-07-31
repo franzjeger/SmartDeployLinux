@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/your-org/deployserver/api/internal/store"
 )
@@ -90,6 +91,23 @@ func TestRestoreLayoutEnv(t *testing.T) {
 		}
 		if got := restoreLayoutEnv(vars); got != tc.want {
 			t.Fatalf("%s: got %q want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestParseSince(t *testing.T) {
+	cases := map[string]time.Duration{
+		"":     7 * 24 * time.Hour,
+		"24h":  24 * time.Hour,
+		"7d":   7 * 24 * time.Hour,
+		"30d":  30 * 24 * time.Hour,
+		"junk": 7 * 24 * time.Hour,
+		"1m":   time.Hour,           // clamped up
+		"999d": 365 * 24 * time.Hour, // clamped down
+	}
+	for in, want := range cases {
+		if got := parseSince(in); got != want {
+			t.Fatalf("parseSince(%q) = %v, want %v", in, got, want)
 		}
 	}
 }
