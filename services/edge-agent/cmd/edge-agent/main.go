@@ -183,6 +183,18 @@ func startDnsmasq(ctx context.Context) error {
 	if err := os.WriteFile("/etc/dnsmasq.conf", []byte(conf), 0644); err != nil {
 		return err
 	}
+	// Second stage for stock iPXE binaries: menu-first with legacy
+	// by-mac fallback. ${net0/mac} is an iPXE macro, expanded on the
+	// client — keep it literal here.
+	fqdn := os.Getenv("DEPLOY_FQDN")
+	if fqdn != "" {
+		script := "#!ipxe\n" +
+			"chain https://" + fqdn + "/boot/menu/by-mac/${net0/mac}.ipxe || " +
+			"chain https://" + fqdn + "/boot/by-mac/${net0/mac}.ipxe || shell\n"
+		if err := os.WriteFile("/tftproot/default.ipxe", []byte(script), 0644); err != nil {
+			slog.Warn("write default.ipxe", "err", err)
+		}
+	}
 	cmd := exec.CommandContext(ctx, "dnsmasq", "--no-daemon", "--conf-file=/etc/dnsmasq.conf")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

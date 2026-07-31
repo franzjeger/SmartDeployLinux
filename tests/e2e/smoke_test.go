@@ -667,6 +667,83 @@ func TestUserRoleAdminFlow(t *testing.T) {
 	}
 }
 
+func TestPXEMenuFlow(t *testing.T) {
+	h := startAPI(t)
+	suffix := randHex(4)
+
+	// Machine with MAC + default profile.
+	_, profileID, _ := h.setupFixtures(suffix)
+	mac := "02:aa:bb:" + suffix[:2] + ":" + suffix[2:4] + ":01"
+	status, m := h.call("POST", "/api/v1/machines", "", map[string]any{
+		"asset_tag": "e2e-pxe-" + suffix, "mac_primary": mac,
+		"default_profile_id": profileID,
+	})
+	h.must(status, 201, m, "create pxe machine")
+
+	get := func(path string) (int, string) {
+		resp, err := http.Get(h.base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(body)
+	}
+
+	// Menu for a registered machine: assigned default with timeout.
+	code, menu := get("/internal/render/menu/by-mac/" + mac)
+	if code != 200 || !strings.Contains(menu, "choose --default deploy_assigned --timeout 8000") {
+		t.Fatalf("menu (registered): %d\n%s", code, menu)
+	}
+	if !strings.HasPrefix(menu, "#!ipxe\n") {
+		t.Fatalf("menu is not an iPXE script:\n%s", menu)
+	}
+
+	// Deploy assigned: mints a token and chains the token boot path.
+	code, handoff := get("/internal/render/menu/deploy/" + mac + "/assigned")
+	if code != 200 || !strings.Contains(handoff, "/boot/") {
+		t.Fatalf("deploy handoff: %d\n%s", code, handoff)
+	}
+	var token string
+	for _, line := range strings.Split(handoff, "\n") {
+		if strings.HasPrefix(line, "chain ") {
+			parts := strings.Split(line, "/boot/")
+			token = strings.TrimSuffix(parts[len(parts)-1], ".ipxe")
+		}
+	}
+	if len(token) < 16 {
+		t.Fatalf("no token in handoff:\n%s", handoff)
+	}
+
+	// The minted token renders the full bundle and advances the job.
+	status, render := h.call("GET", "/internal/render/by-token/"+token, "", nil)
+	h.must(status, 200, render, "render minted token")
+	if render["one_shot_token"] != token {
+		t.Fatalf("token not echoed: %v", render["one_shot_token"])
+	}
+
+	// Locked mode refuses a foreign profile — but still with an
+	// iPXE-valid HTTP-200 script so the menu recovers.
+	status2, imgs := h.call("POST", "/api/v1/images", "", map[string]any{
+		"name": "e2e-pxe2-" + suffix, "os_family": "linux", "os_version": "24.04", "arch": "amd64",
+	})
+	h.must(status2, 201, imgs, "second image")
+	status2, prof2 := h.call("POST", "/api/v1/profiles", "", map[string]any{
+		"name": "e2e-pxe2-prof-" + suffix, "image_id": imgs["id"],
+	})
+	h.must(status2, 201, prof2, "second profile")
+	code, denied := get("/internal/render/menu/deploy/" + mac + "/" + prof2["id"].(string))
+	if code != 200 || !strings.Contains(denied, "exit 1") || !strings.Contains(denied, "locked") {
+		t.Fatalf("locked-mode refusal wrong: %d\n%s", code, denied)
+	}
+
+	// Unregistered MAC: menu still renders, defaults to local boot.
+	code, menu = get("/internal/render/menu/by-mac/02:de:ad:be:ef:99")
+	if code != 200 || !strings.Contains(menu, "choose --default local --timeout 30000") {
+		t.Fatalf("menu (unregistered): %d\n%s", code, menu)
+	}
+}
+
 func TestWakeOnLANQueue(t *testing.T) {
 	h := startAPI(t)
 	suffix := randHex(4)

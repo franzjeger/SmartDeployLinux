@@ -107,3 +107,22 @@ managed MOK enrollment.
 | Target sees no proxyDHCP offer | dnsmasq not on the same L2; or interface mis-set in `LISTEN_INTERFACE`. Check `tcpdump -i $LISTEN_INTERFACE 'udp port 67 or udp port 4011'`. |
 | TFTP times out | Firewall on host blocking UDP 69. dnsmasq uses random high ports for the data transfer; ensure the firewall is stateful or open the ephemeral range. |
 | Boot starts but stops at "iPXE> " | The chain command failed. Drop into shell, type `chain https://...`, look at the actual error. |
+
+## Interactive menu (Phase 23)
+
+PXE clients now land on an interactive iPXE menu instead of chaining
+straight to their assigned profile. Zero-touch is preserved: a machine
+with an assigned profile gets "Deploy assigned profile" as the default
+item on a `PXE_MENU_TIMEOUT_MS` (default 8 s) countdown.
+
+- `PXE_MENU_MODE=locked` (default): the menu offers only the assigned
+  profile — identical trust to the classic by-mac boot.
+- `PXE_MENU_MODE=open`: adds "deploy any registered profile to this
+  machine". Lab mode; see SECURITY.md before enabling.
+- Unregistered MACs get catalog + tools + local boot (default: local,
+  30 s), never deployment.
+- The tftp container generates `/tftproot/default.ipxe` (menu-first,
+  by-mac fallback) at startup for stock iPXE binaries; the embedded
+  stick/PXE build chains the menu from `ipxe/embed.script`. If the
+  menu endpoint is unreachable, everything falls back to the classic
+  by-mac boot automatically.

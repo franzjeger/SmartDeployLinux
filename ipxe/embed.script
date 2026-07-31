@@ -35,7 +35,7 @@ isset ${net0/ip} || dhcp || goto netfail
 ntp pool.ntp.org ||
 
 echo Resolving ${deploy_url} ...
-chain --autofree ${deploy_url}/boot/by-mac/${net0/mac}.ipxe || goto chainfail
+chain --autofree ${deploy_url}/boot/menu/by-mac/${net0/mac}.ipxe || chain --autofree ${deploy_url}/boot/by-mac/${net0/mac}.ipxe || goto chainfail
 
 :chainfail
 inc retry_count
