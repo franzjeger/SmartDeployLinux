@@ -605,6 +605,31 @@ fan out across api replicas.
   default profile exports plain, an LVM profile exports
   `DEPLOY_LAYOUT=lvm DEPLOY_VG=... DEPLOY_SWAP=...`.
 
+## Phase 22 — Reporting & dashboard layer
+
+**Done.**
+
+- API (`/api/v1/reports/*`, perm `job.read`): `summary?since=7d`
+  (totals, success rate, avg duration, active, captures, fleet counts),
+  `daily?days=N` (zero-filled UTC days), `by-profile`, `by-site`
+  (top-20 with per-group success + avg duration), and `jobs.csv`
+  (streamed flat export). Window parser accepts `24h`/`7d`/`30d`,
+  clamped to [1h, 365d].
+- Dashboard UI: report stat tiles (deployments, success rate, avg
+  duration, active), a 14-day stacked outcome chart, by-profile and
+  by-site tables, 24h/7d/30d/90d window chips, Export CSV button.
+- Chart built per the dataviz method: the ok-green/err-red status pair
+  is CVD-inseparable (deutan dE 2.2) so the chart encodes completed as
+  blue `#4493e6` vs failed `#f85149` — the pair passes all six
+  validator checks on the dark surface; legend + native tooltips carry
+  identity (never color alone); one axis, 2px surface gaps, recessive
+  baseline, sparse date labels, text in text tokens. Rendered and
+  visually inspected via headless Chromium against seeded demo data.
+- Tests: report-query integration test (summary math incl. success
+  rate and duration averaging, zero-filled daily, profile/site groups,
+  CSV shape), `parseSince` unit matrix, and e2e assertions that the
+  completed spine job appears in the summary and CSV export.
+
 ## Phase 11 — Final docs
 **Done.**
 
