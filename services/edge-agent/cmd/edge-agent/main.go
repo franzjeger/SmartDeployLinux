@@ -62,6 +62,9 @@ func main() {
 	// EDGE_WAKE_TOKEN is configured).
 	go runWakePoller(ctx)
 
+	// Site-local image mirror (no-op unless EDGE_CACHE_LISTEN is set).
+	go runBlobCache(ctx)
+
 	if err := startDnsmasq(ctx); err != nil {
 		slog.Error("dnsmasq", "err", err)
 		os.Exit(4)

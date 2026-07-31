@@ -4,12 +4,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"text/template"
 	"time"
 
@@ -55,6 +58,45 @@ type renderResp struct {
 	} `json:"image"`
 	OneShotToken string `json:"one_shot_token,omitempty"`
 	JobID        string `json:"job_id,omitempty"`
+}
+
+// machineSite reads the machine's site attribute ("" when unset).
+func machineSite(m *store.Machine) string {
+	if len(m.Attributes) == 0 {
+		return ""
+	}
+	var attrs struct {
+		Site string `json:"site"`
+	}
+	_ = json.Unmarshal(m.Attributes, &attrs)
+	return attrs.Site
+}
+
+// mirrorRewrite points a media URL at a site's local mirror when the
+// URL is served by this deploy server's blob paths (/static, /blobs).
+// Third-party URLs (public distro mirrors etc.) pass through untouched.
+func mirrorRewrite(mirror, deployFQDN, rawURL string) string {
+	if mirror == "" || rawURL == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host != deployFQDN {
+		return rawURL
+	}
+	if !strings.HasPrefix(u.Path, "/static/") && !strings.HasPrefix(u.Path, "/blobs/") {
+		return rawURL
+	}
+	return strings.TrimRight(mirror, "/") + u.Path
+}
+
+// siteMirrorFor resolves the machine's site to its mirror base URL.
+// Best-effort: on lookup failure the machine just fetches from origin.
+func (h *handlers) siteMirrorFor(ctx context.Context, m *store.Machine) string {
+	mirror, err := h.store.SiteMirror(ctx, machineSite(m))
+	if err != nil {
+		return ""
+	}
+	return mirror
 }
 
 func (h *handlers) bundleToResp(b *store.RenderBundle) renderResp {
@@ -109,6 +151,25 @@ func (h *handlers) bundleToResp(b *store.RenderBundle) renderResp {
 	return r
 }
 
+// bundleToRespForSite is bundleToResp plus media-URL rewriting to the
+// machine's site mirror (the edge box's caching blob proxy), when one
+// is configured. This is what turns a 40-machine site into one WAN
+// image transfer instead of forty.
+func (h *handlers) bundleToRespForSite(ctx context.Context, b *store.RenderBundle) renderResp {
+	r := h.bundleToResp(b)
+	mirror := h.siteMirrorFor(ctx, &b.Machine)
+	if mirror == "" {
+		return r
+	}
+	for _, p := range []*string{
+		&r.Image.KernelURL, &r.Image.InitrdURL,
+		&r.Image.WimbootURL, &r.Image.BootWimURL, &r.Image.WimURL,
+	} {
+		*p = mirrorRewrite(mirror, h.deployFQDN, *p)
+	}
+	return r
+}
+
 func nonEmpty(a, b string) string { if a != "" { return a }; return b }
 
 func (h *handlers) renderMachineByID(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +191,7 @@ func (h *handlers) renderMachineByID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.bundleToResp(bundle))
+	writeJSON(w, http.StatusOK, h.bundleToRespForSite(r.Context(), bundle))
 }
 
 func (h *handlers) renderMachineByMAC(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +206,7 @@ func (h *handlers) renderMachineByMAC(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no active profile", http.StatusConflict)
 		return
 	}
-	writeJSON(w, http.StatusOK, h.bundleToResp(bundle))
+	writeJSON(w, http.StatusOK, h.bundleToRespForSite(r.Context(), bundle))
 }
 
 // renderByToken is the path the bootstrap stick (and any LAN PXE chainload
@@ -172,7 +233,7 @@ func (h *handlers) renderByToken(w http.ResponseWriter, r *http.Request) {
 	if bundle.JobID != nil {
 		_ = h.store.AdvanceJob(r.Context(), *bundle.JobID, "bootstrapped")
 	}
-	resp := h.bundleToResp(bundle)
+	resp := h.bundleToRespForSite(r.Context(), bundle)
 	// Echo the raw token back so http-boot can template it into the
 	// nocloud datasource URL and the WinPE bearer. The token already
 	// authenticated this request, so this is not an escalation.
@@ -210,15 +271,29 @@ func (h *handlers) writeUserData(w http.ResponseWriter, r *http.Request, bundle 
 		jobID = bundle.JobID.String()
 	}
 
-	// Capture jobs get a capture cloud-init instead of an installer
-	// answer file: the live environment fetches capture.sh (token-gated)
-	// and archives the installed OS rather than overwriting it.
+	// Branch order matters and is covered by tests:
+	//   1. capture job        → capture cloud-init (archive the machine)
+	//   2. linux golden image → restore cloud-init (untar the archive)
+	//   3. otherwise          → installer answer file (autoinstall etc.)
+	// Capture must win even when the boot profile's image is itself a
+	// golden archive — a capture job must never restore.
+	isCapture := false
 	if bundle.JobID != nil {
 		if jc, err := h.store.GetJobCapture(r.Context(), *bundle.JobID); err == nil && jc.Kind == "capture" {
-			w.Header().Set("Content-Type", "text/cloud-config")
-			fmt.Fprintf(w, linuxCaptureUserDataTpl, h.publicURL, jobID, tok, h.publicURL, jobID)
-			return
+			isCapture = true
 		}
+	}
+	if isCapture {
+		w.Header().Set("Content-Type", "text/cloud-config")
+		fmt.Fprintf(w, linuxCaptureUserDataTpl, h.publicURL, jobID, tok, h.publicURL, jobID)
+		return
+	}
+	if isLinuxGolden(bundle) {
+		archiveURL := h.goldenArchiveURL(r.Context(), bundle)
+		w.Header().Set("Content-Type", "text/cloud-config")
+		fmt.Fprintf(w, linuxRestoreUserDataTpl,
+			h.publicURL, jobID, tok, archiveURL, host, h.publicURL, jobID)
+		return
 	}
 
 	ctxData := userDataContext{
@@ -332,6 +407,19 @@ autoinstall:
   late-commands:
     - 'curtin in-target -- bash -c true || true'
     - 'curl -sf {{.PublicURL}}/v1/jobs/{{.JobID}}/events -X POST -H "Authorization: Bearer {{.Token}}" -H "Content-Type: application/json" --data "{\"phase\":\"completed\",\"message\":\"autoinstall finished\"}" || true'
+`
+
+// linuxRestoreUserDataTpl boots a live environment straight into the
+// golden-image restore script. Args: publicURL, jobID, token,
+// archiveURL, hostname, publicURL, jobID.
+const linuxRestoreUserDataTpl = `#cloud-config
+runcmd:
+  - |
+    export DEPLOY_API=%s DEPLOY_JOB=%s DEPLOY_TOKEN=%s
+    export DEPLOY_ARCHIVE_URL='%s' DEPLOY_HOSTNAME=%s
+    curl -sf -H "Authorization: Bearer $DEPLOY_TOKEN" \
+      %s/v1/jobs/%s/restore.sh -o /run/restore.sh \
+      && sh /run/restore.sh
 `
 
 // linuxCaptureUserDataTpl boots a live environment straight into the

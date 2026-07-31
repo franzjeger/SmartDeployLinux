@@ -271,8 +271,10 @@ type RenderBundle struct {
 	ImageOSFamily  string
 	ImageOSVersion string
 	ImageArch      string
-	ImageBlobKey   string // s3 key for the kernel/wim
-	ImageMedia     []byte // raw jsonb of images.media
+	ImageBlobKey    string // s3 key for the newest image_version blob
+	ImageBlobBucket string
+	ImageBlobSHA    string
+	ImageMedia      []byte // raw jsonb of images.media
 	JobID          *uuid.UUID
 	OneShotToken   string // empty unless caller created one
 }
@@ -333,17 +335,17 @@ func (s *Store) LookupRenderBundle(ctx context.Context, machineID uuid.UUID) (*R
 
 	// Fetch the latest image_version's blob for this image.
 	row = s.pool.QueryRow(ctx, `
-		SELECT b.s3_key
+		SELECT b.s3_key, b.s3_bucket, b.sha256
 		FROM image_versions iv
 		JOIN deployment_profiles dp ON dp.image_id = iv.image_id
 		JOIN blobs b ON b.id = iv.blob_id
 		WHERE dp.id = $1
 		ORDER BY iv.created_at DESC
 		LIMIT 1`, profileID)
-	if err := row.Scan(&bundle.ImageBlobKey); err != nil {
+	if err := row.Scan(&bundle.ImageBlobKey, &bundle.ImageBlobBucket, &bundle.ImageBlobSHA); err != nil {
 		// Not fatal — the renderer can fall back to a configured default URL
 		// for stubbed test images.
-		bundle.ImageBlobKey = ""
+		bundle.ImageBlobKey, bundle.ImageBlobBucket, bundle.ImageBlobSHA = "", "", ""
 	}
 
 	return bundle, nil
@@ -1826,6 +1828,194 @@ func (s *Store) ReapWakeRequests(ctx context.Context, older time.Duration) (int6
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// --- sites ------------------------------------------------------------
+
+type Site struct {
+	Name          string    `json:"name"`
+	MirrorBaseURL *string   `json:"mirror_base_url"`
+	Description   *string   `json:"description"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+func (s *Store) UpsertSite(ctx context.Context, name string, mirrorBaseURL, description *string) (*Site, error) {
+	site := &Site{}
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO sites (name, mirror_base_url, description)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (name) DO UPDATE
+		   SET mirror_base_url = EXCLUDED.mirror_base_url,
+		       description     = EXCLUDED.description
+		RETURNING name, mirror_base_url, description, created_at`,
+		name, mirrorBaseURL, description).
+		Scan(&site.Name, &site.MirrorBaseURL, &site.Description, &site.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return site, nil
+}
+
+func (s *Store) ListSites(ctx context.Context) ([]Site, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT name, mirror_base_url, description, created_at
+		FROM sites ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Site
+	for rows.Next() {
+		var site Site
+		if err := rows.Scan(&site.Name, &site.MirrorBaseURL, &site.Description, &site.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, site)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteSite(ctx context.Context, name string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM sites WHERE name = $1`, name)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SiteMirror returns the mirror base URL for a site name, or "" when
+// the site is unknown or has no mirror configured.
+func (s *Store) SiteMirror(ctx context.Context, name string) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	var mirror *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT mirror_base_url FROM sites WHERE name = $1`, name).Scan(&mirror)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if mirror == nil {
+		return "", nil
+	}
+	return *mirror, nil
+}
+
+// --- user administration ----------------------------------------------
+
+type UserWithRoles struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	OIDCLinked bool     `json:"oidc_linked"`
+	Roles     []string  `json:"roles"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (s *Store) ListUsersWithRoles(ctx context.Context, limit, offset int) ([]UserWithRoles, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT u.id, u.email::text, u.oidc_subject IS NOT NULL,
+		       COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), '{}'),
+		       u.created_at
+		FROM users u
+		LEFT JOIN user_roles ur ON ur.user_id = u.id
+		LEFT JOIN roles r ON r.id = ur.role_id
+		GROUP BY u.id
+		ORDER BY u.created_at
+		LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserWithRoles
+	for rows.Next() {
+		var u UserWithRoles
+		if err := rows.Scan(&u.ID, &u.Email, &u.OIDCLinked, &u.Roles, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+type RoleWithPerms struct {
+	Name        string   `json:"name"`
+	Permissions []string `json:"permissions"`
+}
+
+func (s *Store) ListRoles(ctx context.Context) ([]RoleWithPerms, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.name,
+		       COALESCE(array_agg(rp.permission ORDER BY rp.permission)
+		                FILTER (WHERE rp.permission IS NOT NULL), '{}')
+		FROM roles r
+		LEFT JOIN role_permissions rp ON rp.role_id = r.id
+		GROUP BY r.id
+		ORDER BY r.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RoleWithPerms
+	for rows.Next() {
+		var role RoleWithPerms
+		if err := rows.Scan(&role.Name, &role.Permissions); err != nil {
+			return nil, err
+		}
+		out = append(out, role)
+	}
+	return out, rows.Err()
+}
+
+// GrantRole is idempotent. ErrNotFound when the role name is unknown.
+func (s *Store) GrantRole(ctx context.Context, userID uuid.UUID, roleName string) error {
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id)
+		SELECT $1, id FROM roles WHERE name = $2
+		ON CONFLICT DO NOTHING`, userID, roleName)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// Either the role doesn't exist or the grant already existed;
+		// disambiguate so unknown role names are a caller error.
+		var exists bool
+		if err := s.pool.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM roles WHERE name = $1)`, roleName).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+	}
+	return nil
+}
+
+func (s *Store) RevokeRole(ctx context.Context, userID uuid.UUID, roleName string) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM user_roles
+		WHERE user_id = $1 AND role_id = (SELECT id FROM roles WHERE name = $2)`,
+		userID, roleName)
+	return err
+}
+
+// CountOtherAdmins counts users other than excludeUser holding the
+// admin role. Used by the last-admin lockout guard.
+func (s *Store) CountOtherAdmins(ctx context.Context, excludeUser uuid.UUID) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM user_roles ur
+		JOIN roles r ON r.id = ur.role_id
+		WHERE r.name = 'admin' AND ur.user_id <> $1`, excludeUser).Scan(&n)
+	return n, err
 }
 
 // --- errors ----------------------------------------------------------

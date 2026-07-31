@@ -141,6 +141,34 @@ func TestCaptureShMatchesCanonical(t *testing.T) {
 	}
 }
 
+func TestMirrorRewrite(t *testing.T) {
+	const fqdn = "deploy.example.com"
+	const mirror = "http://192.168.10.2:8090"
+	cases := map[string]string{
+		// Deploy-server blob paths get rewritten.
+		"https://deploy.example.com/static/linux-24.04/vmlinuz": mirror + "/static/linux-24.04/vmlinuz",
+		"https://deploy.example.com/blobs/ab/abc-pack.zip":      mirror + "/blobs/ab/abc-pack.zip",
+		// Third-party mirrors, API paths, and other hosts pass through.
+		"https://releases.ubuntu.com/24.04/vmlinuz":        "https://releases.ubuntu.com/24.04/vmlinuz",
+		"https://deploy.example.com/v1/jobs/x/image.wim":   "https://deploy.example.com/v1/jobs/x/image.wim",
+		"https://other.example.com/static/thing":           "https://other.example.com/static/thing",
+		"": "",
+	}
+	for in, want := range cases {
+		if got := mirrorRewrite(mirror, fqdn, in); got != want {
+			t.Fatalf("rewrite(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// No mirror configured: identity.
+	if got := mirrorRewrite("", fqdn, "https://deploy.example.com/static/x"); got != "https://deploy.example.com/static/x" {
+		t.Fatalf("empty mirror rewrote: %q", got)
+	}
+	// Trailing slash on the mirror doesn't double up.
+	if got := mirrorRewrite(mirror+"/", fqdn, "https://deploy.example.com/static/x"); got != mirror+"/static/x" {
+		t.Fatalf("trailing slash: %q", got)
+	}
+}
+
 func TestLowerHex(t *testing.T) {
 	if got := lowerHex("AB12cdEF"); got != "ab12cdef" {
 		t.Fatalf("lowerHex = %q", got)

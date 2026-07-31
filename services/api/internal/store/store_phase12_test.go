@@ -380,6 +380,122 @@ func TestUpdateMachinePartial(t *testing.T) {
 	}
 }
 
+func TestSitesCRUDAndMirrorLookup(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = st.Pool().Exec(ctx, `DELETE FROM sites`)
+	})
+
+	mirror := "http://192.168.10.2:8090"
+	desc := "Oslo branch"
+	site, err := st.UpsertSite(ctx, "oslo", &mirror, &desc)
+	must(t, err)
+	if site.MirrorBaseURL == nil || *site.MirrorBaseURL != mirror {
+		t.Fatalf("site: %+v", site)
+	}
+
+	// Upsert updates in place.
+	mirror2 := "http://192.168.10.3:8090"
+	site, err = st.UpsertSite(ctx, "oslo", &mirror2, nil)
+	must(t, err)
+	if *site.MirrorBaseURL != mirror2 {
+		t.Fatalf("upsert didn't update: %+v", site)
+	}
+
+	got, err := st.SiteMirror(ctx, "oslo")
+	must(t, err)
+	if got != mirror2 {
+		t.Fatalf("SiteMirror = %q", got)
+	}
+	// Unknown site and empty name → "" without error.
+	for _, name := range []string{"nowhere", ""} {
+		got, err = st.SiteMirror(ctx, name)
+		must(t, err)
+		if got != "" {
+			t.Fatalf("SiteMirror(%q) = %q", name, got)
+		}
+	}
+
+	sites, err := st.ListSites(ctx)
+	must(t, err)
+	if len(sites) != 1 {
+		t.Fatalf("listed %d sites", len(sites))
+	}
+	must(t, st.DeleteSite(ctx, "oslo"))
+	if err := st.DeleteSite(ctx, "oslo"); err != ErrNotFound {
+		t.Fatalf("second delete: %v", err)
+	}
+}
+
+func TestUserRoleAdmin(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	adminID, err := st.SeedAdmin(ctx, "root@example.com")
+	must(t, err)
+	var opID uuid.UUID
+	must(t, st.Pool().QueryRow(ctx, `
+		INSERT INTO users (email) VALUES ('op@example.com') RETURNING id`).Scan(&opID))
+
+	// Grant is idempotent; unknown roles are rejected.
+	must(t, st.GrantRole(ctx, opID, "operator"))
+	must(t, st.GrantRole(ctx, opID, "operator"))
+	if err := st.GrantRole(ctx, opID, "warlord"); err != ErrNotFound {
+		t.Fatalf("unknown role: %v", err)
+	}
+
+	users, err := st.ListUsersWithRoles(ctx, 100, 0)
+	must(t, err)
+	var op *UserWithRoles
+	for i := range users {
+		if users[i].ID == opID {
+			op = &users[i]
+		}
+	}
+	if op == nil || len(op.Roles) != 1 || op.Roles[0] != "operator" {
+		t.Fatalf("operator roles: %+v", op)
+	}
+
+	// Last-admin accounting.
+	n, err := st.CountOtherAdmins(ctx, adminID)
+	must(t, err)
+	if n != 0 {
+		t.Fatalf("other admins = %d, want 0", n)
+	}
+	must(t, st.GrantRole(ctx, opID, "admin"))
+	n, err = st.CountOtherAdmins(ctx, adminID)
+	must(t, err)
+	if n != 1 {
+		t.Fatalf("other admins after grant = %d, want 1", n)
+	}
+	must(t, st.RevokeRole(ctx, opID, "admin"))
+
+	roles, err := st.ListRoles(ctx)
+	must(t, err)
+	if len(roles) != 3 {
+		t.Fatalf("roles = %d, want 3", len(roles))
+	}
+}
+
+func TestRenderBundleCarriesBlobBucketAndSHA(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	var profile uuid.UUID
+	mustImageProfile(t, st, "img-golden", "prof-golden", &profile)
+	tag := "lab-golden"
+	m, err := st.CreateMachine(ctx, CreateMachineInput{AssetTag: &tag, DefaultProfileID: &profile})
+	must(t, err)
+
+	bundle, err := st.LookupRenderBundle(ctx, m.ID)
+	must(t, err)
+	if bundle.ImageBlobKey == "" || bundle.ImageBlobBucket == "" || bundle.ImageBlobSHA == "" {
+		t.Fatalf("bundle blob fields empty: key=%q bucket=%q sha=%q",
+			bundle.ImageBlobKey, bundle.ImageBlobBucket, bundle.ImageBlobSHA)
+	}
+}
+
 func TestBlobAndImageVersionIngest(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

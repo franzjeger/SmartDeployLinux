@@ -380,6 +380,193 @@ func TestCaptureJobUserData(t *testing.T) {
 	}
 }
 
+func TestSiteMirrorRewritesMediaURLs(t *testing.T) {
+	h := startAPI(t)
+	suffix := randHex(4)
+	site := "e2e-mirror-" + suffix
+	mirror := "http://192.168.99.2:8090"
+
+	// Operator registers the site's edge mirror.
+	status, s := h.call("PUT", "/api/v1/sites", "", map[string]any{
+		"name": site, "mirror_base_url": mirror,
+	})
+	h.must(status, 200, s, "upsert site")
+
+	// Fixtures, then re-home the machine to the site.
+	_, profileID, machineID := h.setupFixtures(suffix)
+	status, m := h.call("PATCH", "/api/v1/machines/"+machineID, "", map[string]any{
+		"attributes": map[string]any{"site": site},
+	})
+	h.must(status, 200, m, "set machine site")
+
+	// Point the image's media at the deploy server's own /static path so
+	// the rewrite has something to act on.
+	imgs, _ := m["ID"].(string)
+	_ = imgs
+	token, _ := h.seedRedeem(machineID, profileID, "deploy", "")
+
+	// The fixture image uses third-party mirror.test URLs — those must
+	// NOT be rewritten. Verify passthrough first.
+	status, render := h.call("GET", "/internal/render/by-token/"+token, "", nil)
+	h.must(status, 200, render, "render (third-party media)")
+	img, _ := render["image"].(map[string]any)
+	if img["kernel_url"] != "https://mirror.test/vmlinuz" {
+		t.Fatalf("third-party URL rewritten: %v", img["kernel_url"])
+	}
+
+	// Now switch the image media to deploy-server paths and re-render.
+	resp, err := http.Get(h.base + "/api/v1/images")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var imgsList []map[string]any
+	err = json.NewDecoder(resp.Body).Decode(&imgsList)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageID := ""
+	for _, im := range imgsList {
+		if im["name"] == "e2e-ubuntu-"+suffix {
+			imageID, _ = im["id"].(string)
+		}
+	}
+	if imageID == "" {
+		t.Fatal("fixture image not found")
+	}
+	status, out := h.call("PATCH", "/api/v1/images/"+imageID, "", map[string]any{
+		"media": map[string]any{
+			"kernel_url": "https://" + deployFQDN + "/static/linux-24.04/vmlinuz",
+			"initrd_url": "https://" + deployFQDN + "/static/linux-24.04/initrd",
+		},
+	})
+	h.must(status, 200, out, "patch image media")
+
+	status, render = h.call("GET", "/internal/render/by-token/"+token, "", nil)
+	h.must(status, 200, render, "render (deploy-server media)")
+	img, _ = render["image"].(map[string]any)
+	if img["kernel_url"] != mirror+"/static/linux-24.04/vmlinuz" {
+		t.Fatalf("kernel_url not mirrored: %v", img["kernel_url"])
+	}
+	if img["initrd_url"] != mirror+"/static/linux-24.04/initrd" {
+		t.Fatalf("initrd_url not mirrored: %v", img["initrd_url"])
+	}
+}
+
+func TestLinuxGoldenRestoreUserData(t *testing.T) {
+	h := startAPI(t)
+	suffix := randHex(4)
+	imageID, profileID, machineID := h.setupFixtures(suffix)
+
+	// Turn the fixture image into a golden archive: uploaded version +
+	// deploy_method flag (what capture-complete sets automatically).
+	ctx := context.Background()
+	var blobID string
+	if err := h.db.QueryRow(ctx, `
+		INSERT INTO blobs (sha256, size_bytes, s3_bucket, s3_key)
+		VALUES ($1, 1234, 'images', $2) RETURNING id`,
+		randHex(32), "aa/"+randHex(32)+"-golden.tar.zst").Scan(&blobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.QueryRow(ctx, `
+		INSERT INTO image_versions (image_id, blob_id, version_tag)
+		VALUES ($1, $2, 'gold-1') RETURNING id`, imageID, blobID).Scan(new(string)); err != nil {
+		t.Fatal(err)
+	}
+	status, out := h.call("PATCH", "/api/v1/images/"+imageID, "", map[string]any{
+		"media": map[string]any{"deploy_method": "golden"},
+	})
+	h.must(status, 200, out, "flag image golden")
+
+	// Deploy job: user-data must be the RESTORE cloud-init.
+	token, jobID := h.seedRedeem(machineID, profileID, "deploy", "")
+	status, render := h.call("GET", "/internal/render/by-token/"+token, "", nil)
+	h.must(status, 200, render, "render golden deploy")
+
+	resp, err := http.Get(h.base + "/internal/render/by-token/" + token + "/user-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ud, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	for _, want := range []string{"restore.sh", "DEPLOY_ARCHIVE_URL", "DEPLOY_TOKEN=" + token} {
+		if !strings.Contains(string(ud), want) {
+			t.Fatalf("restore user-data missing %q:\n%s", want, ud)
+		}
+	}
+	if strings.Contains(string(ud), "autoinstall") || strings.Contains(string(ud), "capture.sh") {
+		t.Fatalf("wrong branch selected:\n%s", ud)
+	}
+
+	// restore.sh is served for the deploy token…
+	status, _ = h.call("GET", "/v1/jobs/"+jobID+"/restore.sh", token, nil)
+	if status != 200 {
+		t.Fatalf("restore.sh fetch: %d", status)
+	}
+
+	// …but a CAPTURE job on the same golden image must still capture
+	// (branch order: capture wins), and its token must not pull restore.sh.
+	capToken, capJobID := h.seedRedeem(machineID, profileID, "capture", imageID)
+	status, _ = h.call("GET", "/internal/render/by-token/"+capToken, "", nil)
+	if status != 200 {
+		t.Fatalf("capture render: %d", status)
+	}
+	resp, err = http.Get(h.base + "/internal/render/by-token/" + capToken + "/user-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	capUD, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(capUD), "capture.sh") || strings.Contains(string(capUD), "restore.sh") {
+		t.Fatalf("capture job did not get capture user-data:\n%s", capUD)
+	}
+	status, _ = h.call("GET", "/v1/jobs/"+capJobID+"/restore.sh", capToken, nil)
+	if status == 200 {
+		t.Fatal("capture token pulled restore.sh")
+	}
+}
+
+func TestUserRoleAdminFlow(t *testing.T) {
+	h := startAPI(t)
+	ctx := context.Background()
+
+	var userID string
+	if err := h.db.QueryRow(ctx, `
+		INSERT INTO users (email) VALUES ($1) RETURNING id`,
+		"e2e-"+randHex(4)+"@example.com").Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+
+	status, out := h.call("POST", "/api/v1/users/"+userID+"/roles", "", map[string]any{"role": "operator"})
+	if status != 204 {
+		t.Fatalf("grant: %d %v", status, out)
+	}
+	// Unknown role → 400.
+	status, _ = h.call("POST", "/api/v1/users/"+userID+"/roles", "", map[string]any{"role": "warlord"})
+	if status != 400 {
+		t.Fatalf("unknown role: %d", status)
+	}
+
+	// Make this user the ONLY admin, then verify the lockout guard.
+	if _, err := h.db.Exec(ctx, `
+		DELETE FROM user_roles WHERE role_id = '00000000-0000-0000-0000-000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	status, _ = h.call("POST", "/api/v1/users/"+userID+"/roles", "", map[string]any{"role": "admin"})
+	if status != 204 {
+		t.Fatalf("grant admin: %d", status)
+	}
+	status, out = h.call("DELETE", "/api/v1/users/"+userID+"/roles/admin", "", nil)
+	if status != 409 {
+		t.Fatalf("last-admin guard: got %d %v, want 409", status, out)
+	}
+	// Non-admin roles still revocable.
+	status, _ = h.call("DELETE", "/api/v1/users/"+userID+"/roles/operator", "", nil)
+	if status != 204 {
+		t.Fatalf("revoke operator: %d", status)
+	}
+}
+
 func TestWakeOnLANQueue(t *testing.T) {
 	h := startAPI(t)
 	suffix := randHex(4)

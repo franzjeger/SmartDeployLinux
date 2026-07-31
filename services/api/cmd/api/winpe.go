@@ -141,9 +141,11 @@ func (h *handlers) winpePlan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "driver match: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	mirror := h.siteMirrorFor(r.Context(), &bundle.Machine)
 	urls := make([]string, 0, len(matched))
 	for _, m := range matched {
-		urls = append(urls, fmt.Sprintf("https://%s/blobs/%s", h.deployFQDN, m.BlobKey))
+		urls = append(urls, mirrorRewrite(mirror, h.deployFQDN,
+			fmt.Sprintf("https://%s/blobs/%s", h.deployFQDN, m.BlobKey)))
 	}
 
 	resp := planResponse{
@@ -184,7 +186,7 @@ func (h *handlers) winpeImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "render lookup", http.StatusConflict)
 		return
 	}
-	resp := h.bundleToResp(bundle)
+	resp := h.bundleToRespForSite(r.Context(), bundle)
 	if resp.Image.WimURL == "" {
 		http.Error(w, "no install.wim configured for image", http.StatusNotFound)
 		return
@@ -225,7 +227,8 @@ func (h *handlers) winpeDrivers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r,
-		fmt.Sprintf("https://%s/blobs/%s", h.deployFQDN, matched[0].BlobKey),
+		mirrorRewrite(h.siteMirrorFor(r.Context(), &bundle.Machine), h.deployFQDN,
+			fmt.Sprintf("https://%s/blobs/%s", h.deployFQDN, matched[0].BlobKey)),
 		http.StatusFound)
 }
 

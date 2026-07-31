@@ -40,7 +40,7 @@ func openTestStore(t *testing.T) *Store {
 	// deployment_profiles via default_profile_id, so machines goes
 	// before deployment_profiles.
 	for _, tbl := range []string{
-		"wake_requests",
+		"sites", "wake_requests",
 		"audit_events", "deployment_events", "deployment_jobs",
 		"one_shot_tokens", "auth_codes", "redeem_attempts",
 		"answer_file_templates",
