@@ -17,6 +17,7 @@
 package e2e
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -451,6 +452,67 @@ func TestSiteMirrorRewritesMediaURLs(t *testing.T) {
 	if img["initrd_url"] != mirror+"/static/linux-24.04/initrd" {
 		t.Fatalf("initrd_url not mirrored: %v", img["initrd_url"])
 	}
+}
+
+// TestSSELiveStream proves the full push path: a phone-home lands on
+// the api, rides Postgres LISTEN/NOTIFY through the event bus, and
+// arrives on an open SSE stream — the exact flow the HA tier depends on
+// (in HA the POST and the stream are on different replicas; here they
+// share one process but the Postgres hop is the same).
+func TestSSELiveStream(t *testing.T) {
+	h := startAPI(t)
+	_, profileID, machineID := h.setupFixtures(randHex(4))
+	token, jobID := h.seedRedeem(machineID, profileID, "deploy", "")
+
+	// Boot (advances the job so phone-homes are accepted).
+	status, render := h.call("GET", "/internal/render/by-token/"+token, "", nil)
+	h.must(status, 200, render, "render")
+
+	// Open the SSE stream.
+	req, _ := http.NewRequest("GET", h.base+"/api/v1/jobs/"+jobID+"/events/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("stream status %d", resp.StatusCode)
+	}
+
+	lines := make(chan string, 64)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+
+	// Wait for the backfill marker, then phone home and expect the event
+	// to arrive live over the stream (via the Postgres bus).
+	waitFor := func(substr string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.After(timeout)
+		for {
+			select {
+			case line, ok := <-lines:
+				if !ok {
+					t.Fatalf("stream closed while waiting for %q", substr)
+				}
+				if strings.Contains(line, substr) {
+					return
+				}
+			case <-deadline:
+				t.Fatalf("timed out waiting for %q on SSE stream", substr)
+			}
+		}
+	}
+	waitFor("synced", 10*time.Second)
+
+	status, out := h.call("POST", "/v1/jobs/"+jobID+"/events", token,
+		map[string]any{"phase": "imaging", "message": "sse-live-marker"})
+	h.must(status, 202, out, "phone-home during stream")
+	waitFor("sse-live-marker", 10*time.Second)
 }
 
 func TestLinuxGoldenRestoreUserData(t *testing.T) {

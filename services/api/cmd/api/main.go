@@ -19,8 +19,8 @@ import (
 
 	"github.com/your-org/deployserver/api/internal/auditlog"
 	"github.com/your-org/deployserver/api/internal/auth"
-	"github.com/your-org/deployserver/api/internal/eventbus"
 	"github.com/your-org/deployserver/api/internal/metrics"
+	"github.com/your-org/deployserver/api/internal/pgbus"
 	"github.com/your-org/deployserver/api/internal/mtls"
 	"github.com/your-org/deployserver/api/internal/store"
 	"github.com/your-org/deployserver/api/internal/ui"
@@ -148,13 +148,18 @@ func serve() {
 		auth.SetUserResolver(auth.ResolverFromPool(st.Pool()))
 	}
 
+	// Postgres-backed event bus: SSE pushes fan out across api replicas
+	// (HA gap closed — see pgbus doc comment).
+	bus := pgbus.New(st.Pool())
+	go bus.Run(ctx)
+
 	reg := metrics.NewRegistry()
 	h := &handlers{
 		store:      st,
 		publicURL:  publicURL,
 		deployFQDN: deployFQDN,
 		verifier:   verifier,
-		bus:        eventbus.New(),
+		bus:        bus,
 		metrics:    reg,
 	}
 

@@ -14,11 +14,9 @@
 #     claim loops (wake, notify) are FOR UPDATE SKIP LOCKED and would
 #     scale, but 1 replica is plenty and keeps reasoning simple.
 #
-# Known HA gap (documented in docs/OPERATIONS.md §HA): the SSE event
-# bus is in-memory per api replica — a UI attached to replica A doesn't
-# receive live pushes for phone-homes that landed on replica B. The SSE
-# backfill plus the UI's polling fallback mask this; a Postgres
-# LISTEN/NOTIFY bus is the future fix.
+# SSE across replicas: the event bus is Postgres LISTEN/NOTIFY-backed
+# (internal/pgbus), so a UI attached to replica A receives live pushes
+# for phone-homes that landed on replica B. No sticky sessions needed.
 
 name: deployserver-ha
 

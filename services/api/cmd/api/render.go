@@ -26,12 +26,19 @@ import (
 	"github.com/your-org/deployserver/api/internal/tokens"
 )
 
+// eventBus abstracts the SSE fan-out: the in-process eventbus.Bus in
+// tests/single-replica dev, pgbus.Bus (LISTEN/NOTIFY-backed) in serve.
+type eventBus interface {
+	Publish(eventbus.Event)
+	Subscribe(jobID uuid.UUID) (<-chan eventbus.Event, func())
+}
+
 type handlers struct {
 	store      *store.Store
 	publicURL  string
 	deployFQDN string
 	verifier   *auth.Verifier
-	bus        *eventbus.Bus
+	bus        eventBus
 	metrics    *metrics.Registry
 }
 

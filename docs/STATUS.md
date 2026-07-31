@@ -554,6 +554,31 @@ features landed together. Migrations `0008` (user.read seed) and `0009`
   restore.sh gating; user admin flow incl. last-admin 409 (now 6
   scenarios total).
 
+## Phase 20 — Postgres LISTEN/NOTIFY event bus
+
+**Done.** Closes the one HA gap documented in Phase 19: SSE pushes now
+fan out across api replicas.
+
+- `internal/pgbus`: wraps the in-process eventbus. Publish →
+  `pg_notify('deploy_events', json)`; every replica runs a listener
+  (dedicated pooled connection, capped-backoff reconnect) that fans
+  received notifications out locally. The publisher does NOT
+  short-circuit its own bus — its listener delivers like everyone
+  else's, so all replicas share one ordering and nothing arrives twice.
+  Notify failure falls back to local delivery (single-replica dev
+  degrades gracefully). Oversized messages truncated under the
+  pg_notify payload cap. Semantics stay at-most-once/drop-on-overrun —
+  SSE backfill + UI polling remain the recovery path, unchanged.
+- Handlers depend on a small `eventBus` interface; `serve` wires
+  `pgbus.Bus`, tests keep the in-process bus.
+- HA compose + OPERATIONS notes updated: the documented gap is gone; no
+  sticky sessions needed.
+- Tests: 4 pgbus integration tests against real Postgres (two bus
+  instances = two replicas: cross-instance delivery, no double delivery
+  on the publisher, job scoping, oversize truncation) and a new e2e
+  scenario streaming a live phone-home over SSE through the Postgres
+  hop (7 e2e scenarios total).
+
 ## Phase 11 — Final docs
 **Done.**
 
