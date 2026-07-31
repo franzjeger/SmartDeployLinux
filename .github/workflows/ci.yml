@@ -48,6 +48,12 @@ jobs:
             services/sdk/spectest/go.sum
             tests/e2e/go.sum
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: services/sdk-ts/package-lock.json
+
       - name: build / vet / test all services
         env:
           # Only the api module has integration tests that require this.
@@ -72,6 +78,13 @@ jobs:
             go vet ./... &&
             go test ./... -count=1 )
           echo "::endgroup::"
+
+      - name: typescript sdk — build / test
+        working-directory: services/sdk-ts
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
 
       - name: syntax-check shell scripts
         run: |
