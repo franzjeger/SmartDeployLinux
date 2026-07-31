@@ -78,6 +78,9 @@ Then:
 - [`docs/RUNBOOK_C_EDGE.md`](docs/RUNBOOK_C_EDGE.md) — edge agent.
 - [`docs/FIELD_TEST.md`](docs/FIELD_TEST.md) — hardware validation protocol.
 
+The REST API is documented at `/api/docs` (human) and `/api/openapi.yaml`
+(OpenAPI 3.1, for client generation) on a running server.
+
 ## Status
 
 **v1.0.0.** All designed phases (1–25) are implemented and tested —

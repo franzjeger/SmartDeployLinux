@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/your-org/deployserver/api/internal/apispec"
 	"github.com/your-org/deployserver/api/internal/auditlog"
 	"github.com/your-org/deployserver/api/internal/auth"
 	"github.com/your-org/deployserver/api/internal/metrics"
@@ -208,6 +209,11 @@ func serve() {
 	// code+PKCE flow. Public values only.
 	pub.Get("/api/v1/auth/config", h.authConfig)
 
+	// OpenAPI contract (public): the machine-readable API spec and a
+	// human reference page rendered from it.
+	pub.Handle("/api/openapi.yaml", apispec.Handler())
+	pub.Get("/api/docs", h.apiDocs)
+
 	// Edge-agent wake queue. Shared-secret bearer (EDGE_WAKE_TOKEN);
 	// fails closed when unconfigured.
 	pub.With(middleware.Timeout(15 * time.Second)).
@@ -257,55 +263,7 @@ func serve() {
 		if h.verifier != nil {
 			r.Use(auth.Middleware(h.verifier))
 		}
-		r.Get("/me", h.me)
-		r.Get("/machines", h.listMachines)
-		r.Post("/machines", h.createMachine)
-		r.Get("/machines/{id}", h.getMachine)
-		r.Patch("/machines/{id}", h.updateMachine)
-		r.Delete("/machines/{id}", h.deleteMachine)
-		r.Post("/machines/{id}/wake", h.wakeMachine)
-		r.Get("/machines/{id}/wake", h.listWakes)
-		r.Get("/profiles", h.listProfiles)
-		r.Post("/profiles", h.createProfile)
-		r.Get("/profiles/{id}", h.getProfile)
-		r.Patch("/profiles/{id}", h.updateProfile)
-		r.Delete("/profiles/{id}", h.deleteProfile)
-		r.Put("/profiles/{id}/templates", h.upsertProfileTemplate)
-		r.Delete("/profiles/{id}/templates/{kind}", h.deleteProfileTemplate)
-		r.Get("/images", h.listImages)
-		r.Post("/images", h.createImage)
-		r.Get("/images/{id}", h.getImage)
-		r.Patch("/images/{id}", h.updateImage)
-		r.Delete("/images/{id}", h.deleteImage)
-		r.Post("/blobs", h.createBlob)
-		r.Get("/driver-packs", h.listDriverPacks)
-		r.Post("/driver-packs", h.createDriverPack)
-		r.Delete("/driver-packs/versions/{id}", h.deleteDriverPackVersion)
-		r.Post("/images/{id}/versions", h.createImageVersion)
-		r.Get("/images/{id}/versions", h.listImageVersions)
-		r.Get("/catalog", h.listCatalog)
-		r.Post("/catalog/install", h.installFromCatalog)
-		r.Get("/jobs", h.listJobs)
-		r.Get("/jobs/{id}", h.getJob)
-		r.Post("/jobs/{id}/cancel", h.cancelJob)
-		r.Get("/audit", h.queryAudit)
-		r.Get("/reports/summary", h.reportSummary)
-		r.Get("/reports/daily", h.reportDaily)
-		r.Get("/reports/by-profile", h.reportByProfile)
-		r.Get("/reports/by-site", h.reportBySite)
-		r.Get("/reports/jobs.csv", h.reportJobsCSV)
-		r.Post("/deployments/issue", h.issueDeployment)
-		r.Post("/deployments/bulk", h.bulkDeploy)
-		r.Get("/users", h.listUsers)
-		r.Get("/roles", h.listRoles)
-		r.Post("/users/{id}/roles", h.grantUserRole)
-		r.Delete("/users/{id}/roles/{role}", h.revokeUserRole)
-		r.Get("/sites", h.listSites)
-		r.Put("/sites", h.upsertSite)
-		r.Delete("/sites/{name}", h.deleteSite)
-		r.Post("/bootstrap-sticks", h.registerStick)
-		r.Get("/bootstrap-sticks", h.listSticks)
-		r.Get("/bootstrap-sticks/config", h.stickConfig)
+		h.registerOperatorRoutes(r)
 	})
 
 	// --- internal router: render endpoints, called by http-boot only --
@@ -413,6 +371,62 @@ func cookieBearerFallback(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// registerOperatorRoutes registers the OIDC-gated /api/v1 operator
+// surface. Factored out of serve() so the OpenAPI contract test can walk
+// exactly the routes production serves — the spec and the router can't
+// drift without the test failing.
+func (h *handlers) registerOperatorRoutes(r chi.Router) {
+	r.Get("/me", h.me)
+	r.Get("/machines", h.listMachines)
+	r.Post("/machines", h.createMachine)
+	r.Get("/machines/{id}", h.getMachine)
+	r.Patch("/machines/{id}", h.updateMachine)
+	r.Delete("/machines/{id}", h.deleteMachine)
+	r.Post("/machines/{id}/wake", h.wakeMachine)
+	r.Get("/machines/{id}/wake", h.listWakes)
+	r.Get("/profiles", h.listProfiles)
+	r.Post("/profiles", h.createProfile)
+	r.Get("/profiles/{id}", h.getProfile)
+	r.Patch("/profiles/{id}", h.updateProfile)
+	r.Delete("/profiles/{id}", h.deleteProfile)
+	r.Put("/profiles/{id}/templates", h.upsertProfileTemplate)
+	r.Delete("/profiles/{id}/templates/{kind}", h.deleteProfileTemplate)
+	r.Get("/images", h.listImages)
+	r.Post("/images", h.createImage)
+	r.Get("/images/{id}", h.getImage)
+	r.Patch("/images/{id}", h.updateImage)
+	r.Delete("/images/{id}", h.deleteImage)
+	r.Post("/blobs", h.createBlob)
+	r.Get("/driver-packs", h.listDriverPacks)
+	r.Post("/driver-packs", h.createDriverPack)
+	r.Delete("/driver-packs/versions/{id}", h.deleteDriverPackVersion)
+	r.Post("/images/{id}/versions", h.createImageVersion)
+	r.Get("/images/{id}/versions", h.listImageVersions)
+	r.Get("/catalog", h.listCatalog)
+	r.Post("/catalog/install", h.installFromCatalog)
+	r.Get("/jobs", h.listJobs)
+	r.Get("/jobs/{id}", h.getJob)
+	r.Post("/jobs/{id}/cancel", h.cancelJob)
+	r.Get("/audit", h.queryAudit)
+	r.Get("/reports/summary", h.reportSummary)
+	r.Get("/reports/daily", h.reportDaily)
+	r.Get("/reports/by-profile", h.reportByProfile)
+	r.Get("/reports/by-site", h.reportBySite)
+	r.Get("/reports/jobs.csv", h.reportJobsCSV)
+	r.Post("/deployments/issue", h.issueDeployment)
+	r.Post("/deployments/bulk", h.bulkDeploy)
+	r.Get("/users", h.listUsers)
+	r.Get("/roles", h.listRoles)
+	r.Post("/users/{id}/roles", h.grantUserRole)
+	r.Delete("/users/{id}/roles/{role}", h.revokeUserRole)
+	r.Get("/sites", h.listSites)
+	r.Put("/sites", h.upsertSite)
+	r.Delete("/sites/{name}", h.deleteSite)
+	r.Post("/bootstrap-sticks", h.registerStick)
+	r.Get("/bootstrap-sticks", h.listSticks)
+	r.Get("/bootstrap-sticks/config", h.stickConfig)
 }
 
 func getenv(k, def string) string {
