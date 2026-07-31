@@ -1,0 +1,45 @@
+# Observability overlay (deferred since Phase 3, delivered Phase 24).
+# Run ALONGSIDE the base stack:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+# Adds Prometheus scraping the api's /metrics (the dependency-free
+# exporter added in Phase 12) and Grafana pre-provisioned with the
+# Prometheus datasource and a deployserver dashboard (request rates by
+# group, error ratio, phone-home traffic).
+#
+# Grafana: http://<host>:3001 (admin / value of GRAFANA_ADMIN_PASSWORD,
+# default "admin" — change it). Prometheus is not port-mapped; reach it
+# through Grafana or map 9090 yourself.
+
+services:
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    restart: unless-stopped
+    networks: [deploy]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    restart: unless-stopped
+    networks: [deploy]
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  grafana-data:
