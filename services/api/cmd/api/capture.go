@@ -149,6 +149,13 @@ func (h *handlers) captureComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = h.store.AdvanceJob(r.Context(), jobID, "completed")
+	// A captured Linux image deploys by golden restore from now on
+	// (removable via PATCH /images/{id} media to fall back to installer
+	// media). Windows golden WIMs already deploy through the WinPE path.
+	_, _ = h.store.Pool().Exec(r.Context(), `
+		UPDATE images
+		SET media = media || '{"deploy_method":"golden"}'::jsonb
+		WHERE id = $1 AND os_family = 'linux'`, *jc.ImageID)
 	_ = h.store.Audit(r.Context(), store.AuditEvent{
 		ActorKind: "machine", Action: "capture.completed",
 		SubjectID: jc.ImageID, SubjectKind: "image",

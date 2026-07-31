@@ -85,6 +85,34 @@ jobs:
             shellcheck -S warning "$f" || true
           done
 
+      - name: govulncheck (blocking)
+        run: |
+          set -euo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          for svc in auth-broker api http-boot edge-agent worker deployctl; do
+            echo "::group::$svc"
+            ( cd "services/$svc" && govulncheck ./... )
+            echo "::endgroup::"
+          done
+
+      - name: gosec high-severity (advisory)
+        continue-on-error: true
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest || exit 0
+          for svc in auth-broker api http-boot edge-agent worker deployctl; do
+            ( cd "services/$svc" && gosec -severity high ./... ) || true
+          done
+
+      - name: HA compose config validates
+        run: docker compose -f docker-compose.ha.yml config -q
+        env:
+          POSTGRES_HOST: pg.example.com
+          POSTGRES_USER: x
+          POSTGRES_PASSWORD: x
+          POSTGRES_DB: x
+          S3_ENDPOINT: http://s3.example.com
+          DEPLOY_FQDN: deploy.example.com
+
       - name: deploy-spine e2e smoke
         working-directory: tests/e2e
         env:

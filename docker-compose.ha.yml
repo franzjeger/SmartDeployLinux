@@ -1,0 +1,152 @@
+# HA tier: run STANDALONE (docker compose -f docker-compose.ha.yml up),
+# not as an override of the base file — compose cannot cleanly remove
+# the bundled postgres/minio via overrides.
+#
+# Prerequisites (all via .env):
+#   POSTGRES_HOST/PORT/USER/PASSWORD/DB  -> external managed Postgres
+#   S3_ENDPOINT/S3_PUBLIC_ENDPOINT/...   -> external S3-compatible store
+#
+# Shape:
+#   - api x2 replicas behind caddy (round-robin, /readyz health-gated)
+#   - one-shot api-migrate runs migrations before replicas start, so
+#     concurrent replicas never race the same pending migration
+#   - auth-broker / worker / http-boot stay single-replica. The worker's
+#     claim loops (wake, notify) are FOR UPDATE SKIP LOCKED and would
+#     scale, but 1 replica is plenty and keeps reasoning simple.
+#
+# Known HA gap (documented in docs/OPERATIONS.md §HA): the SSE event
+# bus is in-memory per api replica — a UI attached to replica A doesn't
+# receive live pushes for phone-homes that landed on replica B. The SSE
+# backfill plus the UI's polling fallback mask this; a Postgres
+# LISTEN/NOTIFY bus is the future fix.
+
+name: deployserver-ha
+
+networks:
+  deploy:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+x-app-env: &app-env
+  POSTGRES_HOST: ${POSTGRES_HOST}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB}
+  S3_ENDPOINT: ${S3_ENDPOINT}
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT}
+  S3_REGION: ${S3_REGION}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+  S3_SECRET_KEY: ${S3_SECRET_KEY}
+  S3_BUCKET_IMAGES: ${S3_BUCKET_IMAGES}
+  S3_BUCKET_DRIVERS: ${S3_BUCKET_DRIVERS}
+  S3_BUCKET_BLOBS: ${S3_BUCKET_BLOBS}
+  OIDC_ISSUER: ${OIDC_ISSUER}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+  API_PUBLIC_URL: ${API_PUBLIC_URL}
+  DEPLOY_FQDN: ${DEPLOY_FQDN}
+  DEPLOY_TAILNET: ${DEPLOY_TAILNET}
+  DEPLOY_CA_CERT_PATH: ${DEPLOY_CA_CERT_PATH}
+  AUTH_BROKER_ISSUE_SHARED_SECRET: ${AUTH_BROKER_ISSUE_SHARED_SECRET}
+  EDGE_WAKE_TOKEN: ${EDGE_WAKE_TOKEN}
+  NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL}
+  NOTIFY_WEBHOOK_TOKEN: ${NOTIFY_WEBHOOK_TOKEN}
+  INTERNAL_CA_CERT_PATH: /secrets/internal-ca.pem
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+
+  api-migrate:
+    image: ${REGISTRY:-localhost}/deployserver-api:${TAG:-dev}
+    command: ["/usr/local/bin/api", "migrate", "up"]
+    networks: [deploy]
+    environment:
+      <<: *app-env
+    volumes:
+      - ./secrets:/secrets:ro
+    restart: "no"
+
+  api:
+    image: ${REGISTRY:-localhost}/deployserver-api:${TAG:-dev}
+    restart: unless-stopped
+    networks: [deploy]
+    deploy:
+      replicas: 2
+    depends_on:
+      api-migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *app-env
+      INTERNAL_TLS_CERT: /secrets/api.pem
+      INTERNAL_TLS_KEY: /secrets/api-key.pem
+      API_INTERNAL_LISTEN: ":8443"
+    volumes:
+      - ./secrets:/secrets:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/readyz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  auth-broker:
+    image: ${REGISTRY:-localhost}/deployserver-auth-broker:${TAG:-dev}
+    restart: unless-stopped
+    networks: [deploy]
+    depends_on:
+      api-migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *app-env
+      AUTH_BROKER_LISTEN: ${AUTH_BROKER_LISTEN:-:8081}
+      HEADSCALE_URL: ${HEADSCALE_URL}
+      HEADSCALE_API_KEY: ${HEADSCALE_API_KEY}
+      HEADSCALE_USER: ${HEADSCALE_USER}
+      TAILSCALE_API_KEY: ${TAILSCALE_API_KEY}
+      TAILSCALE_TAILNET: ${TAILSCALE_TAILNET}
+    volumes:
+      - ./secrets:/secrets:ro
+
+  worker:
+    image: ${REGISTRY:-localhost}/deployserver-worker:${TAG:-dev}
+    restart: unless-stopped
+    networks: [deploy]
+    depends_on:
+      api-migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *app-env
+    volumes:
+      - ./secrets:/secrets:ro
+
+  http-boot:
+    image: ${REGISTRY:-localhost}/deployserver-http-boot:${TAG:-dev}
+    restart: unless-stopped
+    networks: [deploy]
+    environment:
+      <<: *app-env
+      API_INTERNAL_URL: https://api:8443
+      INTERNAL_TLS_CERT: /secrets/http-boot.pem
+      INTERNAL_TLS_KEY: /secrets/http-boot-key.pem
+    volumes:
+      - ./secrets:/secrets:ro
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    networks: [deploy]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./services/http-boot/conf/Caddyfile.ha:/etc/caddy/Caddyfile:ro
+      - ./secrets:/secrets:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - auth-broker
+      - http-boot

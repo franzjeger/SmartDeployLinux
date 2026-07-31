@@ -482,6 +482,78 @@ switch fabrics handle at line rate. True multicast on the LAN leg
   a machine homed to a mirrored site renders mirrored URLs while
   third-party URLs pass through.
 
+## Phase 19 — Golden restore, user admin, bulk deploy, notifications, HA, sec-scan
+
+**Done.** Architecture designed by a dedicated planning pass; six
+features landed together. Migrations `0008` (user.read seed) and `0009`
+(deployment_jobs.notified_at + partial index).
+
+### 1. Linux golden-image restore (closes the Linux imaging loop)
+- An image deploys as a golden archive when os_family=linux, it has an
+  uploaded/captured version blob, and media declares
+  `"deploy_method": "golden"` — set automatically by capture-complete
+  for Linux targets, removable via `PATCH /images/{id}` to fall back to
+  installer media.
+- `linux/scripts/restore.sh` (embedded + sync-tested): pick largest
+  fixed disk, GPT-partition (512 MiB ESP + ext4 root; v1 UEFI-only),
+  stream-untar the archive (zstd/gzip), regenerate identity (hostname,
+  machine-id, SSH host keys, fstab with new UUIDs), `grub-install
+  --removable` + config rebuild, phone home, reboot.
+- Archive URL prefers the site mirror (`/blobs` path — the Phase 18
+  edge cache sha-verifies it), else a 6 h presigned S3 GET.
+- `GET /v1/jobs/{id}/restore.sh` job-token gated; refuses capture jobs
+  and non-golden images. `writeUserData` branch order (tested e2e):
+  capture → golden restore → installer; capture always wins.
+
+### 2. User & role management
+- `GET /api/v1/users` (+roles), `GET /api/v1/roles`,
+  `POST /users/{id}/roles`, `DELETE /users/{id}/roles/{role}`;
+  `user.read` seeded for operator, `user.write` admin-only via `*`.
+- Count-based last-admin lockout guard (409), which also covers
+  removing the only other admin and works identity-less in dev mode.
+- Users UI page: role chips, grant dropdown, revoke, role reference.
+
+### 3. Bulk deployments
+- `POST /api/v1/deployments/bulk {machine_ids≤100, profile_id, ttl,
+  wake}` → per-machine results (code or error), sequential issuance
+  (respects broker per-operator rate limits), optional WoL queueing
+  per machine, single audit event with counts. `issueViaBroker` is the
+  shared seam with single issuance.
+- Machines UI: multi-select checkboxes → bulk modal → codes table with
+  copy-all.
+
+### 4. Job notifications
+- Worker claims newly-terminal jobs (`FOR UPDATE SKIP LOCKED`,
+  1 h backfill window so enabling doesn't replay history) and POSTs a
+  webhook (`NOTIFY_WEBHOOK_URL`, optional bearer). Mark-before-POST:
+  at-most-once; UI/SSE stays the record. Payload's `text` field is
+  Slack-incoming-webhook compatible as-is.
+
+### 5. HA tier
+- `docker-compose.ha.yml` (standalone): external Postgres/S3, one-shot
+  `api-migrate` gate, api ×2 replicas health-checked on `/readyz`,
+  `Caddyfile.ha` round-robin with health probing. Known gap documented:
+  the in-memory SSE bus doesn't fan out across replicas (backfill +
+  polling mask it; LISTEN/NOTIFY is the future fix). CI validates the
+  file with `docker compose config`.
+
+### 6. CI security scanning
+- govulncheck blocking + gosec high-severity advisory, per module (the
+  old root-level Makefile invocation could never work across separate
+  modules — fixed, and it now covers all six services). Trivy still
+  deferred (needs built images).
+
+### Tests
+- restore.sh sync + content, `isLinuxGolden` matrix, media parsing (3).
+- `issueViaBroker` stub-broker test (secret header, passthrough).
+- Store integration: role grant/revoke/idempotency/unknown-role,
+  CountOtherAdmins, RenderBundle blob bucket/sha (2).
+- Worker integration (first worker tests): one-shot claim, payload
+  shape, non-terminal + stale exclusion.
+- e2e: golden-restore user-data + capture-wins branch order +
+  restore.sh gating; user admin flow incl. last-admin 409 (now 6
+  scenarios total).
+
 ## Phase 11 — Final docs
 **Done.**
 

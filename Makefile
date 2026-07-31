@@ -70,11 +70,13 @@ test-e2e: ## Run the deploy-spine e2e smoke test (needs DEPLOY_TEST_PG_DSN).
 
 # --- security --------------------------------------------------------------
 
-sec-scan: ## Run gosec, bandit-equiv (none), trivy on images, govulncheck.
-	cd services/api && govulncheck ./...
-	cd services/auth-broker && govulncheck ./...
-	cd services/worker && govulncheck ./...
-	gosec -severity high ./services/...
+sec-scan: ## govulncheck (blocking) + gosec high-severity (advisory), per module.
+	for svc in auth-broker api http-boot edge-agent worker deployctl; do \
+	  ( cd services/$$svc && govulncheck ./... ) || exit 1; \
+	done
+	for svc in auth-broker api http-boot edge-agent worker deployctl; do \
+	  ( cd services/$$svc && gosec -severity high ./... ) || true; \
+	done
 	trivy fs --severity HIGH,CRITICAL --exit-code 1 .
 
 # --- cleaning --------------------------------------------------------------

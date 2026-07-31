@@ -509,7 +509,10 @@ route("/machines", async () => {
     <div class="page">
       <div class="page-title">
         <div><h1>Machines</h1><p class="subtitle">Registered targets. Click a row for detail.</p></div>
-        <div class="page-actions"><button class="btn" id="register-btn">+ Register machine</button></div>
+        <div class="page-actions">
+          <button class="btn secondary" id="bulk-deploy-btn" disabled>Deploy selected (0)</button>
+          <button class="btn" id="register-btn">+ Register machine</button>
+        </div>
       </div>
       <div class="search">
         <input id="machine-search" placeholder="Search asset tag, MAC, vendor…" value="${escapeHTML(machinesState.search)}">
@@ -528,10 +531,11 @@ route("/machines", async () => {
     $("#machines-count").textContent = `${filtered.length} of ${machines.length}`;
     $("#machines-table-wrap").innerHTML = filtered.length ? `
       <table>
-        <thead><tr><th>Asset tag</th><th>MAC</th><th>Vendor / Model</th><th>Profile</th><th>Created</th><th></th></tr></thead>
+        <thead><tr><th></th><th>Asset tag</th><th>MAC</th><th>Vendor / Model</th><th>Profile</th><th>Created</th><th></th></tr></thead>
         <tbody>
           ${filtered.map(m => `
             <tr onclick="location.hash='#/machines/${m.ID}'">
+              <td onclick="event.stopPropagation()"><input type="checkbox" class="bulk-select" data-id="${m.ID}" ${bulkSelected.has(m.ID) ? "checked" : ""}></td>
               <td><strong>${escapeHTML(m.AssetTag || "—")}</strong></td>
               <td class="mono">${escapeHTML(m.MACPrimary || "—")}</td>
               <td>${escapeHTML([m.Vendor, m.Model].filter(Boolean).join(" / ") || "—")}</td>
@@ -541,7 +545,85 @@ route("/machines", async () => {
             </tr>`).join("")}
         </tbody>
       </table>` : `<div class="empty"><div class="empty-icon">▢</div>No machines match.</div>`;
+    $$(".bulk-select").forEach(cb => cb.addEventListener("change", () => {
+      if (cb.checked) bulkSelected.add(cb.dataset.id); else bulkSelected.delete(cb.dataset.id);
+      updateBulkBtn();
+    }));
   };
+
+  const bulkSelected = new Set();
+  const updateBulkBtn = () => {
+    const btn = $("#bulk-deploy-btn");
+    btn.textContent = `Deploy selected (${bulkSelected.size})`;
+    btn.disabled = bulkSelected.size === 0;
+  };
+
+  $("#bulk-deploy-btn").addEventListener("click", () => {
+    if (!bulkSelected.size) return;
+    if (!profiles.length) {
+      toast("Create a profile first.", "err");
+      return;
+    }
+    openModal({
+      title: `Bulk deploy ${bulkSelected.size} machine(s)`,
+      body: `
+        <form id="bulk-form">
+          <div class="row"><label class="full">Profile
+            <select name="profile_id">
+              ${profiles.map(p => `<option value="${p.id}">${escapeHTML(p.name)}</option>`).join("")}
+            </select></label></div>
+          <div class="row">
+            <label>Code TTL (hours) <input name="ttl_hours" type="number" value="24" min="1" max="168"></label>
+            <label style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" name="wake" style="width:auto;"> Wake machines now (WoL)
+            </label>
+          </div>
+        </form>`,
+      primary: { label: "Issue codes" },
+      secondary: "Cancel",
+      onPrimary: async modal => {
+        const fd = new FormData($("#bulk-form", modal));
+        const resp = await api("POST", "/api/v1/deployments/bulk", {
+          machine_ids: [...bulkSelected],
+          profile_id: fd.get("profile_id"),
+          ttl_seconds: (parseInt(fd.get("ttl_hours"), 10) || 24) * 3600,
+          wake: fd.get("wake") === "on",
+        });
+        const byId = Object.fromEntries(machines.map(m => [m.ID, m]));
+        const rows = (resp.results || []).map(res => {
+          const m = byId[res.machine_id] || {};
+          return `<tr class="no-hover">
+            <td>${escapeHTML(m.AssetTag || trunc(res.machine_id))}</td>
+            <td>${res.code
+              ? `<code style="font-size:1.2em;letter-spacing:0.1em;">${escapeHTML(res.code)}</code>`
+              : `<span class="badge err"><span class="dot"></span>${escapeHTML(res.error || "failed")}</span>`}</td>
+            <td class="small muted">${res.wake_id ? "wake queued" : escapeHTML(res.code && res.error ? res.error : "")}</td>
+          </tr>`;
+        }).join("");
+        openModal({
+          title: "Deployment codes issued",
+          body: `
+            <p class="small muted">⚠ Codes are shown once — copy them before closing.
+            Each machine enters its own code at the bootstrap-stick prompt.</p>
+            <div class="table-wrap"><table>
+              <thead><tr><th>Machine</th><th>Code</th><th></th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div>`,
+          primary: { label: "Copy all" },
+          secondary: "Close",
+          onPrimary: async () => {
+            const lines = (resp.results || [])
+              .filter(res => res.code)
+              .map(res => `${(byId[res.machine_id] || {}).AssetTag || res.machine_id}: ${res.code}`);
+            await navigator.clipboard.writeText(lines.join("\n"));
+            toast("Codes copied", "ok");
+            return false;
+          },
+        });
+        return false; // we replaced the modal ourselves
+      },
+    });
+  });
   render();
   $("#machine-search").addEventListener("input", e => { machinesState.search = e.target.value; render(); });
   $("#register-btn").addEventListener("click", () => openMachineCreateModal(profiles));
@@ -2131,6 +2213,84 @@ route("/sticks", async () => {
       });
     } catch (e) { toast(e.message, "err"); }
   });
+});
+
+// ---------- views: Users ----------
+
+route("/users", async () => {
+  setBreadcrumb([{label:"Users"}]);
+  const [users, roles] = await Promise.all([
+    api("GET", "/api/v1/users").catch(() => null),
+    api("GET", "/api/v1/roles").catch(() => []),
+  ]);
+  if (users === null) {
+    $("#content").innerHTML = `
+      <div class="page"><div class="page-title"><h1>Users</h1></div>
+      <div class="card"><div class="empty muted">You need the user.read permission to view users.</div></div></div>`;
+    return;
+  }
+
+  $("#content").innerHTML = `
+    <div class="page">
+      <div class="page-title">
+        <div><h1>Users</h1>
+        <p class="subtitle">Accounts are created automatically on first OIDC login (or by <code>api seed-admin</code>). Grant roles here.</p></div>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Email</th><th>OIDC</th><th>Roles</th><th>Created</th><th></th></tr></thead>
+        <tbody>
+        ${users.map(u => `
+          <tr class="no-hover">
+            <td><strong>${escapeHTML(u.email)}</strong></td>
+            <td>${u.oidc_linked ? `<span class="badge ok"><span class="dot"></span>linked</span>` : `<span class="badge"><span class="dot"></span>pending</span>`}</td>
+            <td>${(u.roles || []).map(role => `
+              <span class="chip">${escapeHTML(role)}
+                <a href="#" class="revoke-role" data-user="${u.id}" data-role="${escapeHTML(role)}" title="Revoke">×</a>
+              </span>`).join(" ") || `<span class="muted small">none</span>`}</td>
+            <td class="muted small">${fmtTime(u.created_at)}</td>
+            <td>
+              <select class="grant-select" data-user="${u.id}">
+                <option value="">+ grant role…</option>
+                ${roles.map(role => `<option value="${escapeHTML(role.name)}">${escapeHTML(role.name)}</option>`).join("")}
+              </select>
+            </td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+
+      <div class="section-title">Role reference</div>
+      <div class="card"><table><tbody>
+        ${roles.map(role => `
+          <tr class="no-hover">
+            <td style="width:120px;"><strong>${escapeHTML(role.name)}</strong></td>
+            <td class="mono small muted">${(role.permissions || []).map(escapeHTML).join(", ") || "—"}</td>
+          </tr>`).join("")}
+      </tbody></table></div>
+    </div>`;
+
+  $$(".grant-select").forEach(sel => sel.addEventListener("change", async () => {
+    const role = sel.value;
+    if (!role) return;
+    try {
+      await api("POST", `/api/v1/users/${sel.dataset.user}/roles`, { role });
+      toast(`Granted ${role}`, "ok");
+      navigate();
+    } catch (e) { toast(e.message, "err"); sel.value = ""; }
+  }));
+  $$(".revoke-role").forEach(a => a.addEventListener("click", async e => {
+    e.preventDefault();
+    const ok = await confirmModal({
+      title: "Revoke role",
+      message: `Remove the "${a.dataset.role}" role from this user?`,
+      danger: true, primaryLabel: "Revoke",
+    });
+    if (!ok) return;
+    try {
+      await api("DELETE", `/api/v1/users/${a.dataset.user}/roles/${encodeURIComponent(a.dataset.role)}`);
+      toast("Role revoked", "ok");
+      navigate();
+    } catch (err) { toast(err.message, "err"); }
+  }));
 });
 
 // ---------- views: Audit ----------

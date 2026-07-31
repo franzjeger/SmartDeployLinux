@@ -12,9 +12,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -76,6 +79,101 @@ func runOnce(ctx context.Context, pool *pgxpool.Pool) {
 	} else if n > 0 {
 		slog.Info("reaped wake_requests", "count", n)
 	}
+	if url := os.Getenv("NOTIFY_WEBHOOK_URL"); url != "" {
+		if n, err := notifyTerminalJobs(ctx, pool, url); err != nil {
+			slog.Error("notify terminal jobs", "err", err)
+		} else if n > 0 {
+			slog.Info("job notifications sent", "count", n)
+		}
+	}
+}
+
+// notifyTerminalJobs claims newly-terminal jobs (FOR UPDATE SKIP LOCKED,
+// safe with multiple workers) and POSTs a webhook per job. Rows are
+// marked notified BEFORE the POST — at-most-once semantics: a failed
+// delivery is logged and lost rather than retried forever; the UI/SSE
+// remains the authoritative record. The 1-hour window means enabling
+// NOTIFY_WEBHOOK_URL doesn't replay history. The payload's `text` field
+// makes the same body Slack-incoming-webhook compatible.
+func notifyTerminalJobs(ctx context.Context, pool *pgxpool.Pool, webhookURL string) (int64, error) {
+	rows, err := pool.Query(ctx, `
+		UPDATE deployment_jobs j
+		SET notified_at = now()
+		FROM (
+			SELECT dj.id FROM deployment_jobs dj
+			WHERE dj.state IN ('completed','failed','cancelled')
+			  AND dj.notified_at IS NULL
+			  AND dj.finished_at > now() - interval '1 hour'
+			ORDER BY dj.finished_at
+			LIMIT 20
+			FOR UPDATE SKIP LOCKED
+		) due
+		WHERE j.id = due.id
+		RETURNING j.id, j.machine_id,
+		          (SELECT asset_tag FROM machines m WHERE m.id = j.machine_id),
+		          j.kind, j.state::text, j.finished_at`)
+	if err != nil {
+		return 0, err
+	}
+	type notif struct {
+		jobID, machineID           string
+		assetTag                   *string
+		kind, state                string
+		finishedAt                 time.Time
+	}
+	var due []notif
+	for rows.Next() {
+		var n notif
+		if err := rows.Scan(&n.jobID, &n.machineID, &n.assetTag, &n.kind, &n.state, &n.finishedAt); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		due = append(due, n)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	var sent int64
+	for _, n := range due {
+		machine := n.machineID
+		if n.assetTag != nil && *n.assetTag != "" {
+			machine = *n.assetTag
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"event":      "job.terminal",
+			"job_id":     n.jobID,
+			"machine_id": n.machineID,
+			"kind":       n.kind,
+			"state":      n.state,
+			"at":         n.finishedAt.UTC().Format(time.RFC3339),
+			"text": fmt.Sprintf("%s job %.8s for machine %s %s",
+				n.kind, n.jobID, machine, n.state),
+		})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(payload))
+		if err != nil {
+			slog.Error("notify build request", "err", err)
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if tok := os.Getenv("NOTIFY_WEBHOOK_TOKEN"); tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			slog.Error("notify post", "job", n.jobID, "err", err)
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode/100 != 2 {
+			slog.Error("notify post status", "job", n.jobID, "status", resp.StatusCode)
+			continue
+		}
+		sent++
+	}
+	return sent, nil
 }
 
 // reapWakeRequests deletes claimed wake requests older than `older`.

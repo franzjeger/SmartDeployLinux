@@ -271,15 +271,29 @@ func (h *handlers) writeUserData(w http.ResponseWriter, r *http.Request, bundle 
 		jobID = bundle.JobID.String()
 	}
 
-	// Capture jobs get a capture cloud-init instead of an installer
-	// answer file: the live environment fetches capture.sh (token-gated)
-	// and archives the installed OS rather than overwriting it.
+	// Branch order matters and is covered by tests:
+	//   1. capture job        → capture cloud-init (archive the machine)
+	//   2. linux golden image → restore cloud-init (untar the archive)
+	//   3. otherwise          → installer answer file (autoinstall etc.)
+	// Capture must win even when the boot profile's image is itself a
+	// golden archive — a capture job must never restore.
+	isCapture := false
 	if bundle.JobID != nil {
 		if jc, err := h.store.GetJobCapture(r.Context(), *bundle.JobID); err == nil && jc.Kind == "capture" {
-			w.Header().Set("Content-Type", "text/cloud-config")
-			fmt.Fprintf(w, linuxCaptureUserDataTpl, h.publicURL, jobID, tok, h.publicURL, jobID)
-			return
+			isCapture = true
 		}
+	}
+	if isCapture {
+		w.Header().Set("Content-Type", "text/cloud-config")
+		fmt.Fprintf(w, linuxCaptureUserDataTpl, h.publicURL, jobID, tok, h.publicURL, jobID)
+		return
+	}
+	if isLinuxGolden(bundle) {
+		archiveURL := h.goldenArchiveURL(r.Context(), bundle)
+		w.Header().Set("Content-Type", "text/cloud-config")
+		fmt.Fprintf(w, linuxRestoreUserDataTpl,
+			h.publicURL, jobID, tok, archiveURL, host, h.publicURL, jobID)
+		return
 	}
 
 	ctxData := userDataContext{
@@ -393,6 +407,19 @@ autoinstall:
   late-commands:
     - 'curtin in-target -- bash -c true || true'
     - 'curl -sf {{.PublicURL}}/v1/jobs/{{.JobID}}/events -X POST -H "Authorization: Bearer {{.Token}}" -H "Content-Type: application/json" --data "{\"phase\":\"completed\",\"message\":\"autoinstall finished\"}" || true'
+`
+
+// linuxRestoreUserDataTpl boots a live environment straight into the
+// golden-image restore script. Args: publicURL, jobID, token,
+// archiveURL, hostname, publicURL, jobID.
+const linuxRestoreUserDataTpl = `#cloud-config
+runcmd:
+  - |
+    export DEPLOY_API=%s DEPLOY_JOB=%s DEPLOY_TOKEN=%s
+    export DEPLOY_ARCHIVE_URL='%s' DEPLOY_HOSTNAME=%s
+    curl -sf -H "Authorization: Bearer $DEPLOY_TOKEN" \
+      %s/v1/jobs/%s/restore.sh -o /run/restore.sh \
+      && sh /run/restore.sh
 `
 
 // linuxCaptureUserDataTpl boots a live environment straight into the

@@ -168,6 +168,8 @@ services:
     environment:
       <<: *common-env
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY}
+      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL}
+      NOTIFY_WEBHOOK_TOKEN: ${NOTIFY_WEBHOOK_TOKEN}
     volumes:
       - ./secrets:/secrets:ro
 

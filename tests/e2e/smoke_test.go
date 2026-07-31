@@ -453,6 +453,120 @@ func TestSiteMirrorRewritesMediaURLs(t *testing.T) {
 	}
 }
 
+func TestLinuxGoldenRestoreUserData(t *testing.T) {
+	h := startAPI(t)
+	suffix := randHex(4)
+	imageID, profileID, machineID := h.setupFixtures(suffix)
+
+	// Turn the fixture image into a golden archive: uploaded version +
+	// deploy_method flag (what capture-complete sets automatically).
+	ctx := context.Background()
+	var blobID string
+	if err := h.db.QueryRow(ctx, `
+		INSERT INTO blobs (sha256, size_bytes, s3_bucket, s3_key)
+		VALUES ($1, 1234, 'images', $2) RETURNING id`,
+		randHex(32), "aa/"+randHex(32)+"-golden.tar.zst").Scan(&blobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.QueryRow(ctx, `
+		INSERT INTO image_versions (image_id, blob_id, version_tag)
+		VALUES ($1, $2, 'gold-1') RETURNING id`, imageID, blobID).Scan(new(string)); err != nil {
+		t.Fatal(err)
+	}
+	status, out := h.call("PATCH", "/api/v1/images/"+imageID, "", map[string]any{
+		"media": map[string]any{"deploy_method": "golden"},
+	})
+	h.must(status, 200, out, "flag image golden")
+
+	// Deploy job: user-data must be the RESTORE cloud-init.
+	token, jobID := h.seedRedeem(machineID, profileID, "deploy", "")
+	status, render := h.call("GET", "/internal/render/by-token/"+token, "", nil)
+	h.must(status, 200, render, "render golden deploy")
+
+	resp, err := http.Get(h.base + "/internal/render/by-token/" + token + "/user-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ud, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	for _, want := range []string{"restore.sh", "DEPLOY_ARCHIVE_URL", "DEPLOY_TOKEN=" + token} {
+		if !strings.Contains(string(ud), want) {
+			t.Fatalf("restore user-data missing %q:\n%s", want, ud)
+		}
+	}
+	if strings.Contains(string(ud), "autoinstall") || strings.Contains(string(ud), "capture.sh") {
+		t.Fatalf("wrong branch selected:\n%s", ud)
+	}
+
+	// restore.sh is served for the deploy token…
+	status, _ = h.call("GET", "/v1/jobs/"+jobID+"/restore.sh", token, nil)
+	if status != 200 {
+		t.Fatalf("restore.sh fetch: %d", status)
+	}
+
+	// …but a CAPTURE job on the same golden image must still capture
+	// (branch order: capture wins), and its token must not pull restore.sh.
+	capToken, capJobID := h.seedRedeem(machineID, profileID, "capture", imageID)
+	status, _ = h.call("GET", "/internal/render/by-token/"+capToken, "", nil)
+	if status != 200 {
+		t.Fatalf("capture render: %d", status)
+	}
+	resp, err = http.Get(h.base + "/internal/render/by-token/" + capToken + "/user-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	capUD, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(capUD), "capture.sh") || strings.Contains(string(capUD), "restore.sh") {
+		t.Fatalf("capture job did not get capture user-data:\n%s", capUD)
+	}
+	status, _ = h.call("GET", "/v1/jobs/"+capJobID+"/restore.sh", capToken, nil)
+	if status == 200 {
+		t.Fatal("capture token pulled restore.sh")
+	}
+}
+
+func TestUserRoleAdminFlow(t *testing.T) {
+	h := startAPI(t)
+	ctx := context.Background()
+
+	var userID string
+	if err := h.db.QueryRow(ctx, `
+		INSERT INTO users (email) VALUES ($1) RETURNING id`,
+		"e2e-"+randHex(4)+"@example.com").Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+
+	status, out := h.call("POST", "/api/v1/users/"+userID+"/roles", "", map[string]any{"role": "operator"})
+	if status != 204 {
+		t.Fatalf("grant: %d %v", status, out)
+	}
+	// Unknown role → 400.
+	status, _ = h.call("POST", "/api/v1/users/"+userID+"/roles", "", map[string]any{"role": "warlord"})
+	if status != 400 {
+		t.Fatalf("unknown role: %d", status)
+	}
+
+	// Make this user the ONLY admin, then verify the lockout guard.
+	if _, err := h.db.Exec(ctx, `
+		DELETE FROM user_roles WHERE role_id = '00000000-0000-0000-0000-000000000001'`); err != nil {
+		t.Fatal(err)
+	}
+	status, _ = h.call("POST", "/api/v1/users/"+userID+"/roles", "", map[string]any{"role": "admin"})
+	if status != 204 {
+		t.Fatalf("grant admin: %d", status)
+	}
+	status, out = h.call("DELETE", "/api/v1/users/"+userID+"/roles/admin", "", nil)
+	if status != 409 {
+		t.Fatalf("last-admin guard: got %d %v, want 409", status, out)
+	}
+	// Non-admin roles still revocable.
+	status, _ = h.call("DELETE", "/api/v1/users/"+userID+"/roles/operator", "", nil)
+	if status != 204 {
+		t.Fatalf("revoke operator: %d", status)
+	}
+}
+
 func TestWakeOnLANQueue(t *testing.T) {
 	h := startAPI(t)
 	suffix := randHex(4)

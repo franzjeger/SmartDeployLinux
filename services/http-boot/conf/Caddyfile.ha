@@ -1,0 +1,78 @@
+# Caddyfile — front proxy for the deploy server. Terminates TLS, routes
+# to the right backend. The cert presented on $DEPLOY_FQDN must chain to
+# the CA pinned on bootstrap sticks (see make-stick.sh / docs/BOOTSTRAP.md).
+#
+# Production tip: put your internal CA in /etc/caddy/internal-ca.pem and
+# enable `tls /etc/caddy/cert.pem /etc/caddy/key.pem` in the site block,
+# replacing Let's Encrypt with your internal cert.
+
+{
+    email {$ACME_EMAIL:admin@example.com}
+    auto_https on
+    log {
+        output stderr
+        format json
+        level INFO
+    }
+}
+
+{$DEPLOY_FQDN} {
+    encode zstd gzip
+
+    # /api/v1/bootstrap/redeem is the only unauthenticated endpoint that
+    # accepts external traffic. Anything else under /api/ requires OIDC.
+    @bootstrap_public {
+        path /api/v1/bootstrap/redeem
+        method POST
+    }
+    handle @bootstrap_public {
+        reverse_proxy auth-broker:8081
+    }
+
+    # /boot/* serves per-machine iPXE scripts and install media. Behind
+    # the tailnet ACL these endpoints are reachable only by tag:deploy-target
+    # / tag:deploy-bootstrap, but Caddy enforces nothing at this layer beyond
+    # rate limits — the deploy server's ingress is restricted to the tailnet
+    # IP at the network level (operator chooses).
+    handle /boot/* {
+        reverse_proxy http-boot:8443 {
+            transport http {
+                tls
+                tls_trust_pool file /secrets/internal-ca.pem
+            }
+        }
+    }
+
+    # Authenticated UI + API. The operator UI is embedded in the api
+    # binary, so the api handles /, /assets/*, /api/*, and the
+    # phone-home /v1/* endpoints.
+    handle {
+        reverse_proxy api:8080 {
+            lb_policy round_robin
+            health_uri /readyz
+            health_interval 10s
+        }
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}
+
+# Internal listener used by tailnet members. We split this from the public
+# listener so that a misconfiguration on the public side cannot expose
+# tailnet-only endpoints.
+:8443 {
+    bind 0.0.0.0
+    tls /secrets/http-boot.pem /secrets/http-boot-key.pem
+
+    handle /boot/* {
+        reverse_proxy http-boot:8443 {
+            transport http {
+                tls
+                tls_trust_pool file /secrets/internal-ca.pem
+            }
+        }
+    }
+}

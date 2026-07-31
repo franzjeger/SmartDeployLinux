@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,28 +104,13 @@ func (h *handlers) issueDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 	bs, _ := json.Marshal(body)
 
-	brokerURL := getenv("DEPLOY_AUTH_BROKER_URL", "http://auth-broker:8081")
-	breq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
-		brokerURL+"/api/v1/bootstrap/issue-code", bytes.NewReader(bs))
-	if err != nil {
-		http.Error(w, "broker request: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	breq.Header.Set("Content-Type", "application/json")
-	// Shared secret authenticating this service to the broker; the
-	// broker rejects issue-code calls without it when configured.
-	if s := os.Getenv("AUTH_BROKER_ISSUE_SHARED_SECRET"); s != "" {
-		breq.Header.Set("X-Internal-Auth", s)
-	}
-	resp, err := http.DefaultClient.Do(breq)
+	status, respBody, hdr, err := h.issueViaBroker(r.Context(), bs)
 	if err != nil {
 		http.Error(w, "broker unreachable: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
-
 	// Pass status + body through unchanged.
-	for k, vs := range resp.Header {
+	for k, vs := range hdr {
 		if k == "Content-Length" {
 			continue
 		}
@@ -132,8 +118,34 @@ func (h *handlers) issueDeployment(w http.ResponseWriter, r *http.Request) {
 			w.Header().Add(k, v)
 		}
 	}
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	w.WriteHeader(status)
+	_, _ = w.Write(respBody)
+}
+
+// issueViaBroker POSTs an issue-code request to the auth-broker with
+// the internal shared secret attached. Single home for the broker URL,
+// auth header, and transport so single and bulk issuance can't drift.
+func (h *handlers) issueViaBroker(ctx context.Context, body []byte) (status int, respBody []byte, hdr http.Header, err error) {
+	brokerURL := getenv("DEPLOY_AUTH_BROKER_URL", "http://auth-broker:8081")
+	breq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		brokerURL+"/api/v1/bootstrap/issue-code", bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	breq.Header.Set("Content-Type", "application/json")
+	if s := os.Getenv("AUTH_BROKER_ISSUE_SHARED_SECRET"); s != "" {
+		breq.Header.Set("X-Internal-Auth", s)
+	}
+	resp, err := http.DefaultClient.Do(breq)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	return resp.StatusCode, b, resp.Header, nil
 }
 
 // --- POST /api/v1/bootstrap-sticks (register) -------------------------
