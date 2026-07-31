@@ -209,3 +209,15 @@ In order, when you suspect a code or stick has been misused:
    compromised. The image itself is signed so you can compare against
    the canonical SHA, but anything written post-apply (domain-joined
    creds, post-install playbooks) needs to be considered tainted.
+
+## PXE menu trust model (Phase 23)
+
+`PXE_MENU_MODE=locked` (default) grants LAN clients nothing beyond the
+pre-existing network-trusted by-mac boot: only a machine's assigned
+profile can be deployed to it. `open` mode lets ANY client on the LAN
+deploy ANY registered profile to ANY registered machine — use it only
+on physically controlled lab networks. Every menu-initiated deployment
+writes an audit event (`job.created_via_pxe_menu`, actor `pxe-menu`,
+source IP) and flows through the standard one-shot-token lifecycle.
+Menu-minted auth_codes rows are synthetic (label `pxe-menu`, already
+expired+redeemed) and can never be redeemed via the broker.

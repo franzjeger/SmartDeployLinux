@@ -2206,6 +2206,74 @@ func (s *Store) StreamJobsCSV(ctx context.Context, w io.Writer, since time.Durat
 	return rows.Err()
 }
 
+// --- PXE menu token minting -------------------------------------------
+
+// MintMenuBootToken attaches a fresh one-shot boot token (caller
+// pre-hashes it — the pepper lives in cmd/api, mirroring
+// LookupRenderBundleByToken's split) to the machine+profile's active
+// job, creating the job (and a synthetic, never-redeemable auth_codes
+// row labelled 'pxe-menu') only when none exists. Reusing the active
+// job means repeated PXE boots don't spam job rows.
+func (s *Store) MintMenuBootToken(ctx context.Context, machineID, profileID uuid.UUID, tokenHash string, ttl time.Duration) (jobID uuid.UUID, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	var authCodeID *uuid.UUID
+	row := tx.QueryRow(ctx, `
+		SELECT id, auth_code_id FROM deployment_jobs
+		WHERE machine_id = $1 AND profile_id = $2
+		  AND state NOT IN ('completed','failed','cancelled')
+		ORDER BY created_at DESC
+		LIMIT 1
+		FOR UPDATE`, machineID, profileID)
+	switch err := row.Scan(&jobID, &authCodeID); {
+	case errors.Is(err, pgx.ErrNoRows):
+		jobID = uuid.Nil
+	case err != nil:
+		return uuid.Nil, err
+	}
+
+	if jobID == uuid.Nil || authCodeID == nil {
+		// Synthetic auth code: random unusable hash, already expired and
+		// redeemed so the broker's redeem path can never match it.
+		var acID uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO auth_codes
+			   (code_hash, machine_id, profile_id, expires_at, redeemed_at, label)
+			VALUES ('pxe-menu:' || md5(random()::text || clock_timestamp()::text),
+			        $1, $2, now(), now(), 'pxe-menu')
+			RETURNING id`, machineID, profileID).Scan(&acID); err != nil {
+			return uuid.Nil, err
+		}
+		if jobID == uuid.Nil {
+			if err := tx.QueryRow(ctx, `
+				INSERT INTO deployment_jobs (machine_id, profile_id, auth_code_id, state)
+				VALUES ($1, $2, $3, 'pending')
+				RETURNING id`, machineID, profileID, acID).Scan(&jobID); err != nil {
+				return uuid.Nil, err
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `
+				UPDATE deployment_jobs SET auth_code_id = $2 WHERE id = $1`,
+				jobID, acID); err != nil {
+				return uuid.Nil, err
+			}
+		}
+		authCodeID = &acID
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO one_shot_tokens (auth_code_id, token_hash, purpose, expires_at)
+		VALUES ($1, $2, 'boot', now() + $3::interval)`,
+		*authCodeID, tokenHash, ttl.String()); err != nil {
+		return uuid.Nil, err
+	}
+	return jobID, tx.Commit(ctx)
+}
+
 // --- errors ----------------------------------------------------------
 
 var (

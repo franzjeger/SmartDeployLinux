@@ -561,6 +561,55 @@ func TestReportQueries(t *testing.T) {
 	}
 }
 
+func TestMintMenuBootToken(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	var profile uuid.UUID
+	mustImageProfile(t, st, "img-menu", "prof-menu", &profile)
+	tag := "lab-menu"
+	mac := "aa:bb:cc:dd:ff:01"
+	m, err := st.CreateMachine(ctx, CreateMachineInput{
+		AssetTag: &tag, MACPrimary: &mac, DefaultProfileID: &profile,
+	})
+	must(t, err)
+
+	// First mint creates the synthetic auth code + pending job + token.
+	job1, err := st.MintMenuBootToken(ctx, m.ID, profile, "sha256:menu-tok-1", time.Hour)
+	must(t, err)
+	var label string
+	var issuedBy *uuid.UUID
+	must(t, st.Pool().QueryRow(ctx, `
+		SELECT ac.label, ac.issued_by FROM deployment_jobs j
+		JOIN auth_codes ac ON ac.id = j.auth_code_id
+		WHERE j.id = $1`, job1).Scan(&label, &issuedBy))
+	if label != "pxe-menu" || issuedBy != nil {
+		t.Fatalf("auth code: label=%q issued_by=%v", label, issuedBy)
+	}
+
+	// Second mint reuses the job (no job spam), issues a distinct token.
+	job2, err := st.MintMenuBootToken(ctx, m.ID, profile, "sha256:menu-tok-2", time.Hour)
+	must(t, err)
+	if job2 != job1 {
+		t.Fatalf("job not reused: %s vs %s", job1, job2)
+	}
+	var tokCount int
+	must(t, st.Pool().QueryRow(ctx, `
+		SELECT count(*) FROM one_shot_tokens t
+		JOIN deployment_jobs j ON j.auth_code_id = t.auth_code_id
+		WHERE j.id = $1`, job1).Scan(&tokCount))
+	if tokCount != 2 {
+		t.Fatalf("token count = %d, want 2", tokCount)
+	}
+
+	// The minted token resolves through the standard render-by-token path.
+	bundle, err := st.LookupRenderBundleByToken(ctx, "sha256:menu-tok-1")
+	must(t, err)
+	if bundle.Machine.ID != m.ID || bundle.ProfileID != profile {
+		t.Fatalf("bundle mismatch: %+v", bundle)
+	}
+}
+
 func TestBlobAndImageVersionIngest(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()

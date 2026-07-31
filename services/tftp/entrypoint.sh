@@ -20,6 +20,16 @@ sed -i \
 echo "==> dnsmasq config:"
 grep -v '^#' "$CONF" | grep -v '^$' | sed 's/^/    /'
 
+# Generate the second-stage script served to stock (non-embedded) iPXE
+# binaries via dhcp-boot tag:ipxe,default.ipxe. Quoted heredoc so iPXE
+# macros like ${net0/mac} survive; only DEPLOY_FQDN is substituted.
+if [ -w /tftproot ] || [ ! -e /tftproot/default.ipxe ]; then
+    cat > /tftproot/default.ipxe <<EOF || echo "WARN: cannot write /tftproot/default.ipxe (read-only mount?)"
+#!ipxe
+chain https://${DEPLOY_FQDN}/boot/menu/by-mac/\${net0/mac}.ipxe || chain https://${DEPLOY_FQDN}/boot/by-mac/\${net0/mac}.ipxe || shell
+EOF
+fi
+
 # tftproot is read-only; verify the binaries we promise to serve exist.
 for f in undionly.kpxe ipxe.efi; do
     if [ ! -r "/tftproot/$f" ]; then

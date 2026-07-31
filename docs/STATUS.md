@@ -630,6 +630,40 @@ fan out across api replicas.
   CSV shape), `parseSince` unit matrix, and e2e assertions that the
   completed spine job appears in the summary and CSV export.
 
+## Phase 23 — Interactive PXE boot menu
+
+**Done.** Designed by the architect agent; menu-first LAN boot with
+zero-touch preserved.
+
+- iPXE menu generated server-side per MAC (`/boot/menu/by-mac/…` via
+  nginx → render passthrough → api): assigned-profile default item on a
+  `PXE_MENU_TIMEOUT_MS` countdown, optional registered-profiles section,
+  distro catalog, tools (memtest when catalog has it, shell, reboot),
+  local boot. Unregistered MACs default to local boot (30 s) with a
+  registration hint — an improvement over today's 404 retry loop.
+- `PXE_MENU_MODE=locked` (default) permits only the assigned profile —
+  same trust as the classic by-mac path; `open` is documented lab mode.
+- Deploy items chain `/boot/menu/deploy/<mac>/<profile>.ipxe`: the api
+  mints a real one-shot token via `store.MintMenuBootToken` (reuses the
+  active job — no job spam; synthetic never-redeemable auth_codes row,
+  migration `0010` makes `issued_by` nullable) and hands off to the
+  standard token boot path — which also fixes the latent by-mac bug
+  where scripts rendered an empty token (broken nocloud URL / WinPE
+  bearer). Every mint is audited (`job.created_via_pxe_menu` + source
+  IP).
+- All error paths return HTTP 200 with valid iPXE (`exit 1`) so the
+  menu recovers via `|| goto menu_failed`; render proxy degrades to the
+  legacy by-mac boot when the api is down.
+- Chain-in: `ipxe/embed.script` menu-first with by-mac fallback; tftp
+  container and edge agent generate `default.ipxe` for stock iPXE
+  binaries.
+- Tests: menu-script structural invariants (shebang, no continuations,
+  one `choose`, every `item` has its `:label`), locked/open/unregistered
+  variants, iPXE-valid error scripts, `MintMenuBootToken` integration
+  (job reuse, synthetic code, token resolves via
+  `LookupRenderBundleByToken`), and an e2e menu → deploy → token →
+  render flow incl. locked-mode refusal (8 e2e scenarios).
+
 ## Phase 11 — Final docs
 **Done.**
 

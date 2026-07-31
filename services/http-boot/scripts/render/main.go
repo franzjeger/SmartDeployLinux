@@ -55,6 +55,10 @@ func main() {
 	r.Get("/render/by-token/{token}/vendor-data", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(200)
 	})
+	// Interactive PXE menu (Phase 23): pure pass-through to the api.
+	r.Get("/render/menu/by-mac/{mac}", h.proxyMenu("/internal/render/menu/by-mac/"))
+	r.Get("/render/menu/deploy/{mac}/{profile}", h.proxyMenuDeploy)
+
 	// Legacy:
 	r.Get("/render/by-id/{id}", h.renderIPXEByID)
 	r.Get("/render/by-mac/{mac}", h.renderIPXEByMAC)
@@ -217,6 +221,45 @@ func (h *handlers) writeIPXE(w http.ResponseWriter, _ *http.Request, data *machi
 	default:
 		http.Error(w, "unknown os_family: "+data.Image.OSFamily, 500)
 	}
+}
+
+// proxyMenu passes menu requests through to the api unchanged. On
+// upstream failure it emits an iPXE-safe fallback that degrades to the
+// legacy by-mac boot, so a dead api behaves like pre-menu deployments.
+func (h *handlers) proxyMenu(apiPrefix string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mac := chi.URLParam(r, "mac")
+		resp, err := h.http.Get(h.apiURL + apiPrefix + mac)
+		if err != nil || resp.StatusCode != 200 {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprintf(w, "#!ipxe\necho menu unavailable, falling back to assigned boot\nchain https://%s/boot/by-mac/%s.ipxe || shell\n",
+				getenv("DEPLOY_FQDN", "deploy.example.com"), mac)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = io.Copy(w, resp.Body)
+	}
+}
+
+func (h *handlers) proxyMenuDeploy(w http.ResponseWriter, r *http.Request) {
+	mac := chi.URLParam(r, "mac")
+	profile := chi.URLParam(r, "profile")
+	resp, err := h.http.Get(h.apiURL + "/internal/render/menu/deploy/" + mac + "/" + profile)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprint(w, "#!ipxe\necho deploy endpoint unavailable\nsleep 3\nexit 1\n")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (h *handlers) renderUserData(w http.ResponseWriter, r *http.Request) {

@@ -324,6 +324,8 @@ func serve() {
 		_, _ = w.Write([]byte("ok"))
 	})
 	intr.Route("/render", func(r chi.Router) {
+		r.Get("/menu/by-mac/{mac}", h.renderMenuByMAC)
+		r.Get("/menu/deploy/{mac}/{profile}", h.renderMenuDeploy)
 		r.Get("/by-token/{token}", h.renderByToken)
 		r.Get("/by-token/{token}/user-data", h.renderUserDataByToken)
 		r.Get("/by-token/{token}/meta-data", h.renderMetaDataByToken)
