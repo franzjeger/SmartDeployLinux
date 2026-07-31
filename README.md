@@ -79,7 +79,11 @@ Then:
 - [`docs/FIELD_TEST.md`](docs/FIELD_TEST.md) — hardware validation protocol.
 
 The REST API is documented at `/api/docs` (human) and `/api/openapi.yaml`
-(OpenAPI 3.1, for client generation) on a running server.
+(OpenAPI 3.1, for client generation) on a running server. A typed Go
+client built from that contract lives in
+[`services/sdk`](services/sdk/README.md) — zero runtime dependencies, all
+51 operations, with a parity test that keeps it in exact correspondence
+with the spec. `deployctl`'s `machines` commands are built on it.
 
 ## Status
 

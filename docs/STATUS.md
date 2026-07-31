@@ -733,6 +733,47 @@ deployctl images via a `VERSION` build arg (Dockerfiles + bake);
   spec cannot silently drift from the code. Plus a spec-validity check.
 - New dep: `gopkg.in/yaml.v3` (spec parsing for the docs renderer).
 
+## Phase 28 — Generated-quality Go SDK
+
+**Done.**
+
+- New module **`services/sdk`** (`github.com/your-org/deployserver/sdk`):
+  a typed Go client covering all **51** operator operations —
+  `sdk.New(sdk.Options{BaseURL, Token, HTTP})` then one method per
+  endpoint (`ListMachines`, `IssueDeployment`, `BulkDeploy`,
+  `ReportJobsCSV`, …). **Zero dependencies — full stop:** the module's
+  `go.mod` has no `require`, so importing it adds nothing to a caller's
+  `go.sum`.
+- Typed errors: `*APIError{Status, Method, Path, Message}` plus
+  `IsNotFound` / `IsForbidden` helpers, so callers classify failures
+  without string-matching.
+- **Parity gate** (`TestOperationParity`): the SDK embeds a verbatim copy
+  of the OpenAPI spec and asserts an EXACT bijection between the
+  operations it implements (`AllOperations`) and the paths+methods the
+  spec documents — the same guarantee a code generator gives, enforced on
+  a hand-written client. openapi-generator is Java (unavailable in this
+  environment), so the SDK is hand-written and this test is what makes it
+  generated-grade.
+- **Sync gate** (`TestEmbeddedSpecMatchesSource`): asserts the embedded
+  `openapi.yaml` is byte-identical to the api module's source of truth;
+  `make sync-sdk-spec` refreshes it. Skips (doesn't fail) in a standalone
+  SDK checkout where the source isn't present.
+- The two spec-parity tests need a YAML parser, so they live in a
+  separate internal module **`services/sdk/spectest`** — that keeps the
+  shippable SDK module genuinely dependency-free while still enforcing
+  parity in CI (the pattern the best-in-class Go SDKs use).
+- httptest-backed behavior tests (in the SDK module, standard library
+  only) cover auth header, path escaping, JSON body encoding, query
+  params, the `{results:[…]}` bulk unwrap, raw CSV, and typed 404/403
+  classification.
+- **Dogfooded:** `deployctl`'s `machines` commands (`list`/`get`/
+  `create`/`wake`) now ride on the SDK via a `replace => ../sdk`
+  directive — a spec/SDK drift that breaks those commands is caught at
+  build time (and deployctl stays dependency-free too). `godoc` examples
+  + `services/sdk/README.md` document usage.
+- `Makefile`: `test-unit` extended to the sdk + spectest modules,
+  `sec-scan` to the sdk module; new `sync-sdk-spec` target.
+
 ## Phase 11 — Final docs
 **Done.**
 

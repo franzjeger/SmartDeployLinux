@@ -64,6 +64,11 @@ test-unit: ## Run Go unit tests across all services.
 	cd services/edge-agent && go test ./...
 	cd services/http-boot && go test ./...
 	cd services/deployctl && go test ./...
+	cd services/sdk && go test ./...
+	cd services/sdk/spectest && go test ./...
+
+sync-sdk-spec: ## Refresh the SDK's embedded OpenAPI spec from the api source of truth.
+	cp services/api/internal/apispec/openapi.yaml services/sdk/openapi.yaml
 
 test-e2e: ## Run the deploy-spine e2e smoke test (needs DEPLOY_TEST_PG_DSN).
 	cd tests/e2e && go test ./... -count=1 -v
@@ -71,10 +76,10 @@ test-e2e: ## Run the deploy-spine e2e smoke test (needs DEPLOY_TEST_PG_DSN).
 # --- security --------------------------------------------------------------
 
 sec-scan: ## govulncheck (blocking) + gosec high-severity (advisory), per module.
-	for svc in auth-broker api http-boot edge-agent worker deployctl; do \
+	for svc in auth-broker api http-boot edge-agent worker deployctl sdk; do \
 	  ( cd services/$$svc && govulncheck ./... ) || exit 1; \
 	done
-	for svc in auth-broker api http-boot edge-agent worker deployctl; do \
+	for svc in auth-broker api http-boot edge-agent worker deployctl sdk; do \
 	  ( cd services/$$svc && gosec -severity high ./... ) || true; \
 	done
 	trivy fs --severity HIGH,CRITICAL --exit-code 1 .

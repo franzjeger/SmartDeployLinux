@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 
-	"github.com/your-org/deployserver/deployctl/internal/client"
+	sdk "github.com/your-org/deployserver/sdk"
 )
 
 func machinesMain(args []string) {
@@ -42,35 +43,25 @@ func machinesWake(args []string) {
 	id := args[0]
 	_ = fs.Parse(args[1:])
 
-	c, err := client.New()
+	c, err := newSDK()
 	if err != nil {
 		die(err)
 	}
-	body := map[string]any{}
-	if *at != "" {
-		body["at"] = *at
-	}
-	if *site != "" {
-		body["site"] = *site
-	}
-	var out struct {
-		WakeID string `json:"wake_id"`
-		Site   string `json:"site"`
-	}
-	if err := c.Do("POST", "/api/v1/machines/"+id+"/wake", body, &out); err != nil {
-		die(err)
+	out, err := c.WakeMachine(context.Background(), id, sdk.WakeInput{At: *at, Site: *site})
+	if err != nil {
+		die(machineErr(id, err))
 	}
 	fmt.Printf("wake %s queued for site %q\n", out.WakeID, out.Site)
 }
 
 func machinesList(args []string) {
 	_ = parseFlags(args, flag.NewFlagSet("machines list", flag.ExitOnError))
-	c, err := client.New()
+	c, err := newSDK()
 	if err != nil {
 		die(err)
 	}
-	var out []map[string]any
-	if err := c.Do("GET", "/api/v1/machines", nil, &out); err != nil {
+	out, err := c.ListMachines(context.Background())
+	if err != nil {
 		die(err)
 	}
 	printJSON(out)
@@ -85,28 +76,28 @@ func machinesCreate(args []string) {
 	defaultProfile := fs.String("default-profile", "", "default deployment profile UUID")
 	parseFlags(args, fs)
 
-	body := map[string]any{}
+	var in sdk.CreateMachineInput
 	if *asset != "" {
-		body["asset_tag"] = *asset
+		in.AssetTag = asset
 	}
 	if *mac != "" {
-		body["mac_primary"] = *mac
+		in.MACPrimary = mac
 	}
 	if *vendor != "" {
-		body["vendor"] = *vendor
+		in.Vendor = vendor
 	}
 	if *model != "" {
-		body["model"] = *model
+		in.Model = model
 	}
 	if *defaultProfile != "" {
-		body["default_profile_id"] = *defaultProfile
+		in.DefaultProfileID = defaultProfile
 	}
-	c, err := client.New()
+	c, err := newSDK()
 	if err != nil {
 		die(err)
 	}
-	var out map[string]any
-	if err := c.Do("POST", "/api/v1/machines", body, &out); err != nil {
+	out, err := c.CreateMachine(context.Background(), in)
+	if err != nil {
 		die(err)
 	}
 	printJSON(out)
@@ -118,15 +109,24 @@ func machinesGet(args []string) {
 		os.Exit(2)
 	}
 	id := args[0]
-	c, err := client.New()
+	c, err := newSDK()
 	if err != nil {
 		die(err)
 	}
-	var out map[string]any
-	if err := c.Do("GET", "/api/v1/machines/"+id, nil, &out); err != nil {
-		die(err)
+	out, err := c.GetMachine(context.Background(), id)
+	if err != nil {
+		die(machineErr(id, err))
 	}
 	printJSON(out)
+}
+
+// machineErr turns the SDK's typed 404 into a friendlier message while
+// leaving other errors untouched.
+func machineErr(id string, err error) error {
+	if sdk.IsNotFound(err) {
+		return fmt.Errorf("machine %s not found", id)
+	}
+	return err
 }
 
 func die(err error) {

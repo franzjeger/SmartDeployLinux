@@ -1,0 +1,778 @@
+openapi: 3.1.0
+info:
+  title: deployserver operator API
+  version: 1.0.0
+  description: >
+    The operator-facing REST API for deployserver. All endpoints under
+    `/api/v1` require a bearer OIDC ID token (obtain one with
+    `deployctl auth login`); in dev mode (no OIDC configured) auth is
+    open. Permissions are enforced per-endpoint via RBAC — the required
+    permission is noted in each operation's description. This document is
+    kept honest by a contract test that asserts the running routes and
+    these paths are in exact correspondence.
+  license:
+    name: Apache-2.0
+servers:
+  - url: https://deploy.example.com
+    description: Replace with your DEPLOY_FQDN.
+security:
+  - bearerAuth: []
+tags:
+  - name: identity
+  - name: machines
+  - name: profiles
+  - name: images
+  - name: driver-packs
+  - name: catalog
+  - name: jobs
+  - name: deployments
+  - name: reports
+  - name: users
+  - name: sites
+  - name: bootstrap-sticks
+  - name: audit
+
+paths:
+  /api/v1/auth/config:
+    get:
+      tags: [identity]
+      summary: Pre-auth OIDC discovery
+      description: >
+        Public (pre-auth). The UI and CLI call this to learn the issuer
+        and client id for the login flow, and whether the server runs in
+        dev mode.
+      security: []
+      responses:
+        "200":
+          description: OIDC public config
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  issuer: { type: string }
+                  client_id: { type: string }
+                  dev_mode: { type: boolean }
+
+  /api/v1/me:
+    get:
+      tags: [identity]
+      summary: Current principal
+      responses:
+        "200":
+          description: The authenticated user id and dev-mode flag.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: string, format: uuid }
+                  dev_mode: { type: boolean }
+
+  /api/v1/machines:
+    get:
+      tags: [machines]
+      summary: List machines
+      description: "Requires `machine.read`."
+      responses:
+        "200":
+          description: Machines
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Machine" } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [machines]
+      summary: Register a machine
+      description: "Requires `machine.write`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateMachine" }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Machine" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/machines/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    get:
+      tags: [machines]
+      summary: Get a machine
+      description: "Requires `machine.read`."
+      responses:
+        "200": { description: Machine, content: { application/json: { schema: { $ref: "#/components/schemas/Machine" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [machines]
+      summary: Update a machine (partial)
+      description: "Requires `machine.write`. Omitted fields are unchanged; an empty `default_profile_id` clears it."
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateMachine" } } }
+      responses:
+        "200": { description: Updated, content: { application/json: { schema: { $ref: "#/components/schemas/Machine" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [machines]
+      summary: Delete a machine
+      description: "Requires `machine.write`."
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/machines/{id}/wake:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    get:
+      tags: [machines]
+      summary: Wake-request history
+      description: "Requires `machine.read`."
+      responses:
+        "200": { description: Wake requests, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/WakeRequest" } } } } }
+    post:
+      tags: [machines]
+      summary: Queue a wake-on-LAN
+      description: "Requires `deployment.create`. Site defaults to the machine's `attributes.site`."
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                at: { type: string, format: date-time, description: "RFC3339; empty = next agent poll" }
+                site: { type: string }
+      responses:
+        "202": { description: Queued, content: { application/json: { schema: { type: object, properties: { wake_id: { type: string }, site: { type: string } } } } } }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/profiles:
+    get:
+      tags: [profiles]
+      summary: List deployment profiles
+      description: "Requires `image.read`."
+      responses:
+        "200": { description: Profiles, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Profile" } } } } }
+    post:
+      tags: [profiles]
+      summary: Create a profile
+      description: "Requires `image.write`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, image_id]
+              properties:
+                name: { type: string }
+                image_id: { type: string, format: uuid }
+                answer_file_vars: { type: object, additionalProperties: true }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Profile" } } } }
+
+  /api/v1/profiles/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    get:
+      tags: [profiles]
+      summary: Get a profile with its answer-file templates
+      description: "Requires `image.read`."
+      responses:
+        "200": { description: Profile }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [profiles]
+      summary: Update a profile
+      description: "Requires `image.write`."
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: Updated }
+    delete:
+      tags: [profiles]
+      summary: Delete a profile
+      description: "Requires `image.write`."
+      responses:
+        "204": { description: Deleted }
+
+  /api/v1/profiles/{id}/templates:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    put:
+      tags: [profiles]
+      summary: Upsert an answer-file template
+      description: "Requires `image.write`. `kind` is one of autoinstall|kickstart|preseed|cloud-init|ignition|unattend."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, body]
+              properties:
+                kind: { type: string }
+                body: { type: string }
+      responses:
+        "200": { description: Upserted }
+
+  /api/v1/profiles/{id}/templates/{kind}:
+    parameters:
+      - { $ref: "#/components/parameters/IdPath" }
+      - { name: kind, in: path, required: true, schema: { type: string } }
+    delete:
+      tags: [profiles]
+      summary: Delete an answer-file template
+      description: "Requires `image.write`."
+      responses:
+        "204": { description: Deleted }
+
+  /api/v1/images:
+    get:
+      tags: [images]
+      summary: List images
+      description: "Requires `image.read`."
+      responses:
+        "200": { description: Images, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Image" } } } } }
+    post:
+      tags: [images]
+      summary: Create an image
+      description: "Requires `image.write`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, os_family, os_version, arch]
+              properties:
+                name: { type: string }
+                os_family: { type: string, enum: [windows, linux] }
+                os_version: { type: string }
+                arch: { type: string, enum: [amd64, arm64] }
+                description: { type: string }
+                media: { $ref: "#/components/schemas/ImageMedia" }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Image" } } } }
+
+  /api/v1/images/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    get:
+      tags: [images]
+      summary: Get an image
+      description: "Requires `image.read`."
+      responses: { "200": { description: Image, content: { application/json: { schema: { $ref: "#/components/schemas/Image" } } } } }
+    patch:
+      tags: [images]
+      summary: Update an image (name/description/media)
+      description: "Requires `image.write`."
+      requestBody: { content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: Updated } }
+    delete:
+      tags: [images]
+      summary: Delete an image
+      description: "Requires `image.write`."
+      responses: { "204": { description: Deleted } }
+
+  /api/v1/images/{id}/versions:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    get:
+      tags: [images]
+      summary: List image versions
+      description: "Requires `image.read`."
+      responses: { "200": { description: Versions } }
+    post:
+      tags: [images]
+      summary: Link an uploaded blob as a new image version
+      description: "Requires `image.write`. Register the blob with POST /api/v1/blobs first."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [blob_id]
+              properties: { blob_id: { type: string, format: uuid }, version_tag: { type: string } }
+      responses: { "201": { description: Version created } }
+
+  /api/v1/blobs:
+    post:
+      tags: [images]
+      summary: Register a blob and get a presigned upload URL
+      description: "Requires `image.write`. Upload the bytes to the returned URL (PUT), then link via image or driver-pack version."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sha256, size_bytes]
+              properties:
+                sha256: { type: string, description: "64 lowercase hex chars" }
+                size_bytes: { type: integer, format: int64 }
+                filename: { type: string }
+                role: { type: string, enum: [images, drivers, blobs] }
+      responses:
+        "201":
+          description: Presigned upload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blob_id: { type: string, format: uuid }
+                  bucket: { type: string }
+                  key: { type: string }
+                  upload_url: { type: string }
+                  expires_in_seconds: { type: integer }
+        "503": { description: Object store not configured }
+
+  /api/v1/driver-packs:
+    get:
+      tags: [driver-packs]
+      summary: List driver-pack versions
+      description: "Requires `driverpack.read` or `image.read`."
+      responses: { "200": { description: Driver packs } }
+    post:
+      tags: [driver-packs]
+      summary: Create a driver-pack version with match rules
+      description: "Requires `image.write`. Register the .zip blob (role=drivers) first."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vendor, model, os_family, blob_id, rules]
+              properties:
+                vendor: { type: string }
+                model: { type: string }
+                os_family: { type: string, enum: [windows, linux] }
+                os_version: { type: string }
+                version_tag: { type: string }
+                blob_id: { type: string, format: uuid }
+                rules:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type: { type: string, enum: [pci-vid-did, dmi-product, dmi-baseboard, dmi-vendor, os-version] }
+                      value: { type: string }
+      responses: { "201": { description: Created } }
+
+  /api/v1/driver-packs/versions/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    delete:
+      tags: [driver-packs]
+      summary: Delete a driver-pack version
+      description: "Requires `image.write`."
+      responses: { "204": { description: Deleted }, "404": { $ref: "#/components/responses/NotFound" } }
+
+  /api/v1/catalog:
+    get:
+      tags: [catalog]
+      summary: The distro net-install catalog
+      description: "Requires `image.read`."
+      responses: { "200": { description: Catalog } }
+
+  /api/v1/catalog/install:
+    post:
+      tags: [catalog]
+      summary: Install an image from the catalog
+      description: "Requires `image.write`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entry_id]
+              properties: { entry_id: { type: string }, name: { type: string } }
+      responses: { "201": { description: Image created from catalog } }
+
+  /api/v1/jobs:
+    get:
+      tags: [jobs]
+      summary: List deployment jobs
+      description: "Requires `job.read`. Filter with `state`, `machine`, `limit`."
+      parameters:
+        - { name: state, in: query, schema: { type: string } }
+        - { name: machine, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { "200": { description: Jobs, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Job" } } } } } }
+
+  /api/v1/jobs/{id}:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    get:
+      tags: [jobs]
+      summary: Get a job with its event trail
+      description: "Requires `job.read`."
+      responses: { "200": { description: Job + events }, "404": { $ref: "#/components/responses/NotFound" } }
+
+  /api/v1/jobs/{id}/cancel:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    post:
+      tags: [jobs]
+      summary: Cancel a non-terminal job
+      description: "Requires `deployment.create`. Revokes the job's boot tokens."
+      responses: { "204": { description: Cancelled }, "409": { $ref: "#/components/responses/Conflict" } }
+
+  /api/v1/deployments/issue:
+    post:
+      tags: [deployments]
+      summary: Issue a deployment code
+      description: "Requires `deployment.create` (capture additionally needs `image.write`)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IssueDeployment" }
+      responses:
+        "200":
+          description: Code issued
+          content:
+            application/json:
+              schema: { type: object, properties: { code: { type: string }, expires_at: { type: string, format: date-time } } }
+
+  /api/v1/deployments/bulk:
+    post:
+      tags: [deployments]
+      summary: Issue deployment codes for many machines
+      description: "Requires `deployment.create`. Up to 100 machines; always 200 with per-machine results."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [machine_ids, profile_id]
+              properties:
+                machine_ids: { type: array, items: { type: string, format: uuid } }
+                profile_id: { type: string, format: uuid }
+                ttl_seconds: { type: integer }
+                wake: { type: boolean }
+      responses:
+        "200":
+          description: Per-machine results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        machine_id: { type: string }
+                        code: { type: string }
+                        expires_at: { type: string }
+                        wake_id: { type: string }
+                        error: { type: string }
+
+  /api/v1/reports/summary:
+    get:
+      tags: [reports]
+      summary: Deployment summary for a window
+      description: "Requires `job.read`. `since` accepts 24h/7d/30d style values."
+      parameters: [{ $ref: "#/components/parameters/Since" }]
+      responses: { "200": { description: Summary, content: { application/json: { schema: { $ref: "#/components/schemas/ReportSummary" } } } } }
+
+  /api/v1/reports/daily:
+    get:
+      tags: [reports]
+      summary: Per-day outcomes (zero-filled)
+      description: "Requires `job.read`."
+      parameters: [{ name: days, in: query, schema: { type: integer } }]
+      responses: { "200": { description: Daily outcomes } }
+
+  /api/v1/reports/by-profile:
+    get:
+      tags: [reports]
+      summary: Outcomes grouped by profile
+      description: "Requires `job.read`."
+      parameters: [{ $ref: "#/components/parameters/Since" }]
+      responses: { "200": { description: Groups } }
+
+  /api/v1/reports/by-site:
+    get:
+      tags: [reports]
+      summary: Outcomes grouped by site
+      description: "Requires `job.read`."
+      parameters: [{ $ref: "#/components/parameters/Since" }]
+      responses: { "200": { description: Groups } }
+
+  /api/v1/reports/jobs.csv:
+    get:
+      tags: [reports]
+      summary: Flat CSV export of jobs in a window
+      description: "Requires `job.read`."
+      parameters: [{ $ref: "#/components/parameters/Since" }]
+      responses:
+        "200": { description: CSV, content: { text/csv: { schema: { type: string } } } }
+
+  /api/v1/audit:
+    get:
+      tags: [audit]
+      summary: Query the audit log
+      description: "Requires `audit.read`."
+      parameters:
+        - { name: since, in: query, schema: { type: string } }
+        - { name: action, in: query, schema: { type: string, description: "action prefix filter" } }
+      responses: { "200": { description: Audit events } }
+
+  /api/v1/users:
+    get:
+      tags: [users]
+      summary: List users with their roles
+      description: "Requires `user.read`."
+      responses: { "200": { description: Users, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/User" } } } } } }
+
+  /api/v1/roles:
+    get:
+      tags: [users]
+      summary: List roles with permissions
+      description: "Requires `user.read`."
+      responses: { "200": { description: Roles } }
+
+  /api/v1/users/{id}/roles:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    post:
+      tags: [users]
+      summary: Grant a role to a user
+      description: "Requires `user.write` (admin only)."
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [role], properties: { role: { type: string } } } } }
+      responses: { "204": { description: Granted }, "400": { $ref: "#/components/responses/BadRequest" } }
+
+  /api/v1/users/{id}/roles/{role}:
+    parameters:
+      - { $ref: "#/components/parameters/IdPath" }
+      - { name: role, in: path, required: true, schema: { type: string } }
+    delete:
+      tags: [users]
+      summary: Revoke a role from a user
+      description: "Requires `user.write`. Refused (409) if it would remove the last admin."
+      responses: { "204": { description: Revoked }, "409": { $ref: "#/components/responses/Conflict" } }
+
+  /api/v1/sites:
+    get:
+      tags: [sites]
+      summary: List sites
+      description: "Requires `machine.read`."
+      responses: { "200": { description: Sites, content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Site" } } } } } }
+    put:
+      tags: [sites]
+      summary: Upsert a site (by name)
+      description: "Requires `machine.write`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                mirror_base_url: { type: string, description: "edge box's image cache, or null" }
+                description: { type: string }
+      responses: { "200": { description: Upserted, content: { application/json: { schema: { $ref: "#/components/schemas/Site" } } } } }
+
+  /api/v1/sites/{name}:
+    parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+    delete:
+      tags: [sites]
+      summary: Delete a site
+      description: "Requires `machine.write`."
+      responses: { "204": { description: Deleted }, "404": { $ref: "#/components/responses/NotFound" } }
+
+  /api/v1/bootstrap-sticks:
+    get:
+      tags: [bootstrap-sticks]
+      summary: List registered bootstrap sticks
+      description: "Requires `stick.read` or `*`."
+      responses: { "200": { description: Sticks } }
+    post:
+      tags: [bootstrap-sticks]
+      summary: Register a built bootstrap stick
+      description: "Requires `stick.write` or `*`."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                image_sha256: { type: string }
+                tailnet: { type: string }
+                deploy_url: { type: string }
+                ca_fingerprint: { type: string }
+                label: { type: string }
+      responses: { "201": { description: Registered } }
+
+  /api/v1/bootstrap-sticks/config:
+    get:
+      tags: [bootstrap-sticks]
+      summary: Generate stick build config
+      description: "Requires `stick.write` or `*`. Returns config.json, the CA PEM, and the make-stick.sh command."
+      parameters: [{ name: tailnet, in: query, schema: { type: string } }]
+      responses:
+        "200":
+          description: Stick config
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config_json: { type: string }
+                  ca_pem: { type: string }
+                  make_stick_command: { type: string }
+                  deploy_url: { type: string }
+                  control_url: { type: string }
+                  tailnet: { type: string }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Since:
+      name: since
+      in: query
+      schema: { type: string, default: "7d", description: "24h / 7d / 30d style window" }
+  responses:
+    BadRequest: { description: Invalid request }
+    Forbidden: { description: Missing the required permission }
+    NotFound: { description: Not found }
+    Conflict: { description: State conflict }
+  schemas:
+    Machine:
+      type: object
+      properties:
+        ID: { type: string, format: uuid }
+        AssetTag: { type: [string, "null"] }
+        MACPrimary: { type: [string, "null"] }
+        Vendor: { type: [string, "null"] }
+        Model: { type: [string, "null"] }
+        DefaultProfileID: { type: [string, "null"], format: uuid }
+        Attributes: { type: object, additionalProperties: true }
+        CreatedAt: { type: string, format: date-time }
+    CreateMachine:
+      type: object
+      properties:
+        asset_tag: { type: string }
+        mac_primary: { type: string }
+        uuid_smbios: { type: string, format: uuid }
+        vendor: { type: string }
+        model: { type: string }
+        default_profile_id: { type: string, format: uuid }
+        attributes: { type: object, additionalProperties: true }
+    UpdateMachine:
+      type: object
+      properties:
+        asset_tag: { type: string }
+        mac_primary: { type: string }
+        vendor: { type: string }
+        model: { type: string }
+        default_profile_id: { type: string, description: "empty string clears the profile" }
+        attributes: { type: object, additionalProperties: true }
+    Profile:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        image_id: { type: string, format: uuid }
+        image_name: { type: string }
+        os_family: { type: string }
+        os_version: { type: string }
+        created_at: { type: string, format: date-time }
+    Image:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        os_family: { type: string }
+        os_version: { type: string }
+        arch: { type: string }
+        description: { type: [string, "null"] }
+        versions_count: { type: integer }
+        media: { $ref: "#/components/schemas/ImageMedia" }
+        created_at: { type: string, format: date-time }
+    ImageMedia:
+      type: object
+      description: Operator-controlled boot media URLs and flags.
+      properties:
+        kernel_url: { type: string }
+        initrd_url: { type: string }
+        wimboot_url: { type: string }
+        bootwim_url: { type: string }
+        wim_url: { type: string }
+        deploy_method: { type: string, enum: [golden], description: "set to golden by capture-complete for Linux images" }
+      additionalProperties: true
+    Job:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        machine_id: { type: string, format: uuid }
+        machine_asset_tag: { type: string }
+        profile_name: { type: string }
+        state: { type: string, enum: [pending, bootstrapped, imaging, post_install, completed, failed, cancelled] }
+        kind: { type: string, enum: [deploy, capture] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+    IssueDeployment:
+      type: object
+      required: [machine_id, profile_id]
+      properties:
+        machine_id: { type: string, format: uuid }
+        profile_id: { type: string, format: uuid }
+        ttl_seconds: { type: integer }
+        issued_for: { type: string }
+        binding_cidr: { type: string }
+        kind: { type: string, enum: [deploy, capture] }
+        capture_image_id: { type: string, format: uuid }
+        capture_version_tag: { type: string }
+    WakeRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        machine_id: { type: string, format: uuid }
+        mac: { type: string }
+        site: { type: string }
+        scheduled_at: { type: string, format: date-time }
+        claimed_at: { type: [string, "null"], format: date-time }
+        claimed_by: { type: [string, "null"] }
+    ReportSummary:
+      type: object
+      properties:
+        window: { type: string }
+        total: { type: integer }
+        completed: { type: integer }
+        failed: { type: integer }
+        cancelled: { type: integer }
+        active: { type: integer }
+        captures: { type: integer }
+        success_rate: { type: number }
+        avg_duration_secs: { type: number }
+        machines_total: { type: integer }
+        images_total: { type: integer }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        oidc_linked: { type: boolean }
+        roles: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+    Site:
+      type: object
+      properties:
+        name: { type: string }
+        mirror_base_url: { type: [string, "null"] }
+        description: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
