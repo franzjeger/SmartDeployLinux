@@ -66,6 +66,7 @@ Then:
 - [`docs/RUNBOOK_A_USB.md`](docs/RUNBOOK_A_USB.md) — primary deploy path.
 - [`docs/RUNBOOK_B_PXE.md`](docs/RUNBOOK_B_PXE.md) — LAN PXE.
 - [`docs/RUNBOOK_C_EDGE.md`](docs/RUNBOOK_C_EDGE.md) — edge agent.
+- [`docs/FIELD_TEST.md`](docs/FIELD_TEST.md) — hardware validation protocol.
 
 ## Status
 
