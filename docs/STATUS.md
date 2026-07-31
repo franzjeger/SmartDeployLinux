@@ -707,6 +707,13 @@ access logs). Each test lists prerequisites, expected results, failure
 triage pointers, and evidence to capture; a results-record template
 closes the doc.
 
+## Phase 26 — Release v1.0.0
+
+**Done.** README moved off "work in progress" to the real feature set;
+`CHANGELOG.md` written; `main.version` stamped into api / auth-broker /
+deployctl images via a `VERSION` build arg (Dockerfiles + bake);
+`v1.0.0` tag + GitHub release.
+
 ## Phase 11 — Final docs
 **Done.**
 
