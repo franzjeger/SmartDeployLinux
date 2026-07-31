@@ -554,6 +554,57 @@ features landed together. Migrations `0008` (user.read seed) and `0009`
   restore.sh gating; user admin flow incl. last-admin 409 (now 6
   scenarios total).
 
+## Phase 20 — Postgres LISTEN/NOTIFY event bus
+
+**Done.** Closes the one HA gap documented in Phase 19: SSE pushes now
+fan out across api replicas.
+
+- `internal/pgbus`: wraps the in-process eventbus. Publish →
+  `pg_notify('deploy_events', json)`; every replica runs a listener
+  (dedicated pooled connection, capped-backoff reconnect) that fans
+  received notifications out locally. The publisher does NOT
+  short-circuit its own bus — its listener delivers like everyone
+  else's, so all replicas share one ordering and nothing arrives twice.
+  Notify failure falls back to local delivery (single-replica dev
+  degrades gracefully). Oversized messages truncated under the
+  pg_notify payload cap. Semantics stay at-most-once/drop-on-overrun —
+  SSE backfill + UI polling remain the recovery path, unchanged.
+- Handlers depend on a small `eventBus` interface; `serve` wires
+  `pgbus.Bus`, tests keep the in-process bus.
+- HA compose + OPERATIONS notes updated: the documented gap is gone; no
+  sticky sessions needed.
+- Tests: 4 pgbus integration tests against real Postgres (two bus
+  instances = two replicas: cross-instance delivery, no double delivery
+  on the publisher, job scoping, oversize truncation) and a new e2e
+  scenario streaming a live phone-home over SSE through the Postgres
+  hop (7 e2e scenarios total).
+
+## Phase 21 — BIOS + LVM layouts in Linux golden restore
+
+**Done.** Removes the two v1 restrictions on Phase 19's restore path.
+
+- **Boot mode auto-detected on the target**: UEFI (ESP + GRUB
+  x86_64-efi `--removable`) when `/sys/firmware/efi` exists; legacy
+  BIOS otherwise (GPT with a 2 MiB BIOS boot partition + GRUB
+  i386-pc). No configuration needed — the same golden image deploys to
+  either firmware.
+- **Layout from profile vars** (`answer_file_vars`): `restore_layout`
+  plain (default) | lvm; lvm adds `restore_vg` (default vg0) and
+  optional `restore_swap` (e.g. "8G") for a swap LV; root LV takes the
+  remaining space. fstab covers root/ESP/swap with fresh UUIDs.
+- **Initramfs regeneration** after restore (`update-initramfs` /
+  `dracut`, best-effort) so LVM modules and storage drivers match the
+  *target* hardware and layout — the hardware-independence step when
+  target differs from the golden source.
+- Server: `restoreLayoutEnv` threads the profile vars into the restore
+  cloud-init as shell exports, whitelisted to safe characters (the
+  values land inside a shell script; injection attempts are dropped,
+  tested).
+- Tests: layout-env unit matrix incl. injection cases, restore.sh
+  content assertions (i386-pc/efi, lvm, initramfs), e2e extended —
+  default profile exports plain, an LVM profile exports
+  `DEPLOY_LAYOUT=lvm DEPLOY_VG=... DEPLOY_SWAP=...`.
+
 ## Phase 11 — Final docs
 **Done.**
 
