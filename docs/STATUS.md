@@ -774,6 +774,41 @@ deployctl images via a `VERSION` build arg (Dockerfiles + bake);
 - `Makefile`: `test-unit` extended to the sdk + spectest modules,
   `sec-scan` to the sdk module; new `sync-sdk-spec` target.
 
+## Phase 29 — TypeScript SDK
+
+**Done.**
+
+- New package **`services/sdk-ts`** (`@your-org/deployserver-sdk`): a
+  typed TypeScript/JavaScript client covering the same **51** operations
+  as the Go SDK. `new DeployClient({ baseUrl, token })` then one method
+  per endpoint. Ships **ESM + `.d.ts`**; runs in Node 18+ and the browser.
+- **Zero runtime dependencies.** HTTP rides on the global `fetch`; a
+  custom implementation can be injected via `Options.fetch`. The YAML
+  parser the parity test needs is a **devDependency**, so
+  `npm install @your-org/deployserver-sdk` pulls nothing but the package
+  (npm never installs devDependencies for consumers — cleaner than Go's
+  module graph, no spectest split needed). Verified via the committed
+  lockfile (zero non-dev entries) and `npm pack --dry-run`.
+- Typed errors: an `ApiError` class plus `isNotFound` / `isForbidden`.
+- **Parity gate** (`test/parity.test.ts`): embeds a byte-identical copy
+  of the OpenAPI spec and asserts an EXACT bijection between the
+  operations it implements (`ALL_OPERATIONS`, derived from the operation
+  table) and the paths+methods the spec documents. Proven to fail on
+  injected drift. The operation table is also wired into the methods, so
+  **dropping an operation is a compile error**, not just a test failure —
+  a stronger guarantee than the Go SDK.
+- **Sync gate** (same file): asserts the embedded copy is byte-identical
+  to the api module's source of truth; `npm run sync-spec` (or
+  `make sync-sdk-spec`, which now refreshes both SDKs) updates it. Skips
+  in a standalone checkout.
+- `fetch`-backed behavior tests (Node's built-in `node:test` +
+  `node:http`, no third-party test runner): auth header, path escaping,
+  JSON body, query params, `{results}` bulk unwrap, raw CSV, typed
+  404/403 classification. 15 tests total; all local gates green.
+- `Makefile`: new `test-ts` target, folded into `test`; `sync-sdk-spec`
+  refreshes both SDK copies. CI: an `actions/setup-node` step + an
+  `npm ci && npm test` stage in the single consolidated job.
+
 ## Phase 11 — Final docs
 **Done.**
 
