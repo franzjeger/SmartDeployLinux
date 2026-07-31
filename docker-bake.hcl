@@ -7,6 +7,7 @@
 
 variable "REGISTRY" { default = "ghcr.io/your-org/deployserver" }
 variable "TAG" { default = "dev" }
+variable "VERSION" { default = "dev" }
 
 group "default" {
   targets = ["api", "auth-broker", "http-boot", "worker", "edge-agent", "tftp"]
@@ -14,6 +15,7 @@ group "default" {
 
 target "_common" {
   platforms = ["linux/amd64"]
+  args = { VERSION = "${VERSION}" }
 }
 
 target "api" {

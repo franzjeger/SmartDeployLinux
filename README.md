@@ -19,7 +19,17 @@ LAN by PXE's L2-broadcast dependency.
   - **Edge agent (bulk remote sites):** small Linux box at a remote LAN
     joins the tailnet as a subnet router and runs local proxyDHCP+TFTP, so
     a roomful of machines can PXE without 50 sticks.
-- Web UI + REST API + CLI. RBAC via OIDC. mTLS service-to-service.
+- Golden-image capture AND restore for both OS families: WinPE+DISM
+  for Windows; tar+zstd with identity regeneration for Linux (UEFI or
+  BIOS, plain or LVM layouts).
+- Interactive PXE menu with zero-touch preserved (assigned profile
+  auto-deploys on a countdown); locked/open authorization modes.
+- Site-local image distribution: the edge box caches and
+  sha256-verifies images, so a 40-machine site costs one WAN transfer.
+- Wake-on-LAN scheduling, bulk deployments, job webhooks, reporting
+  dashboard with CSV export, Prometheus/Grafana observability.
+- Web UI + REST API + CLI (OIDC PKCE + device-flow login). RBAC via
+  OIDC. mTLS service-to-service.
 - Single-host `docker compose up` for the small tier; 3-node HA tier with
   external Postgres + S3.
 
@@ -70,8 +80,12 @@ Then:
 
 ## Status
 
-This is **work in progress**. See `docs/STATUS.md` for what's actually
-implemented vs. designed.
+**v1.0.0.** All designed phases (1–25) are implemented and tested —
+~95 unit/integration tests plus an 8-scenario end-to-end harness run
+against a real Postgres in CI. See `CHANGELOG.md` for the release
+summary, `docs/STATUS.md` for the phase-by-phase record, and
+`docs/FIELD_TEST.md` for the hardware validation protocol (the flows
+that need real firmware, a live Headscale, or the Windows ADK).
 
 ## License
 

@@ -1,11 +1,12 @@
 FROM golang:1.23.4-alpine AS build
+ARG VERSION=dev
 WORKDIR /src
 RUN apk add --no-cache git
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -trimpath -ldflags="-s -w -buildid=" \
+    -trimpath -ldflags="-s -w -buildid= -X main.version=${VERSION}" \
     -o /out/api ./cmd/api
 
 FROM gcr.io/distroless/static-debian12:nonroot
