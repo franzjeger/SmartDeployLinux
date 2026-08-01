@@ -47,11 +47,37 @@ for any deployment by anyone, anywhere.
 ## Quick start (small tier)
 
 ```sh
-cp .env.example .env       # edit at minimum: DEPLOY_FQDN, HEADSCALE_URL, OIDC_*
-make build                  # compiles all containers
-docker compose up -d        # brings up Postgres, MinIO, API, UI, http-boot, etc.
-make seed-admin             # creates the first OIDC-mapped admin
+cp .env.example .env       # edit at minimum: DEPLOY_FQDN, OIDC_*, POSTGRES_PASSWORD
+make secrets               # one-time: internal CA + per-service mTLS certs
+make build-images          # compiles the service containers (a few minutes)
+docker compose up -d       # brings up Postgres, MinIO, API, http-boot, etc.
+make seed-admin            # creates the first OIDC-mapped admin
 ```
+
+`make secrets` is not optional — every service mounts `secrets/` and the
+api's internal listener requires a client cert signed by that CA, so the
+stack will not come up without it.
+
+Use `make build-images` here, not `make build`. `make build` additionally
+downloads and compiles buildroot and iPXE from source to produce the USB
+bootstrap image — tens of minutes and a pile of host build dependencies.
+You only need that when you are ready to make a stick (`make
+build-bootstrap`), not to run the server.
+
+Two settings in `.env` decide what actually starts, and both are easy to
+miss:
+
+- `COMPOSE_FILE` — which overlays merge. Without it you must pass `-f`
+  flags on every command.
+- `COMPOSE_PROFILES` — which optional services run. Without it, `docker
+  compose up -d` silently leaves out the auth-broker (needed to issue
+  deployment codes) and the LAN-PXE listener.
+
+Leaving `OIDC_ISSUER` / `OIDC_CLIENT_ID` empty starts the api with **no
+authentication at all** — it logs `OIDC verifier unavailable; public API
+will be open` and serves `/api/v1/*` to anyone who can reach the port.
+That is fine for a lab on a trusted network; configure OIDC before the
+server holds anything you care about.
 
 Then:
 
