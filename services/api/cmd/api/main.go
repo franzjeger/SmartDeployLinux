@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,6 +48,8 @@ func main() {
 		runMigrate(os.Args[2:])
 	case "seed-admin":
 		seedAdmin()
+	case "healthcheck":
+		healthcheck()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n", os.Args[1])
 		os.Exit(2)
@@ -60,6 +64,33 @@ func openStore(ctx context.Context) *store.Store {
 		os.Exit(2)
 	}
 	return st
+}
+
+// healthcheck probes the public listener and exits non-zero if it is not
+// serving. It exists as a subcommand because the runtime image is
+// distroless: there is no shell and no curl, so a compose `healthcheck:`
+// has nothing to run except this binary.
+func healthcheck() {
+	addr := getenv("API_LISTEN", ":8080")
+	// API_LISTEN is a listen address (":8080", "0.0.0.0:8080"); turn it
+	// into something dialable from inside the container.
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	} else if h, p, err := net.SplitHostPort(addr); err == nil && (h == "" || h == "0.0.0.0" || h == "::") {
+		addr = net.JoinHostPort("127.0.0.1", p)
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://" + addr + "/healthz")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "healthcheck: /healthz returned %d\n", resp.StatusCode)
+		os.Exit(1)
+	}
 }
 
 func runMigrate(args []string) {
