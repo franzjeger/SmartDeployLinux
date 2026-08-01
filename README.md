@@ -99,6 +99,8 @@ Then:
   cloud-init.
 - [`docs/SECURITY.md`](docs/SECURITY.md) — threat model and mitigations.
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — backups, upgrades, scale.
+- [`docs/UPGRADING.md`](docs/UPGRADING.md) — upgrading a running server,
+  with rollback and the pre-`.env` migration path.
 - [`docs/RUNBOOK_A_USB.md`](docs/RUNBOOK_A_USB.md) — primary deploy path.
 - [`docs/RUNBOOK_B_PXE.md`](docs/RUNBOOK_B_PXE.md) — LAN PXE.
 - [`docs/RUNBOOK_C_EDGE.md`](docs/RUNBOOK_C_EDGE.md) — edge agent.

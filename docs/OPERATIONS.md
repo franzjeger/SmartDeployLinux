@@ -36,13 +36,25 @@ dump, run `make test-e2e` against it.
 
 ## 2. Upgrades
 
-The pattern:
+Full procedure, including backup, verification and rollback:
+[`UPGRADING.md`](UPGRADING.md). The short version:
 
-1. `git pull` → check release notes for migration steps.
-2. `docker compose pull` → fetch new images.
-3. Apply migrations: `docker compose run --rm api migrate up`. Phase 4
-   ships only `0001_init.sql`; future migrations are forward-only.
-4. `docker compose up -d` → rolling restart of services.
+```sh
+git pull
+docker compose up -d --build
+```
+
+`--build` is required on the small tier. Images are built locally and
+tagged `localhost/deployserver-*`, so there is nothing to pull and a
+plain `up -d` would restart the old images. `docker compose pull` fails
+outright against those tags — it is only correct once `REGISTRY` points
+at a real registry you push to.
+
+Migrations need no separate step: the api applies them on startup and
+the operation is idempotent. `docker compose run --rm api migrate up`
+remains available if you prefer to apply them explicitly first.
+Migrations are forward-only — there are no down migrations, so rolling
+back across a schema change means restoring a dump (§1).
 
 The bootstrap stick is **decoupled from server upgrades**. A v1.0
 stick continues to work against a v1.5 deploy server as long as the
