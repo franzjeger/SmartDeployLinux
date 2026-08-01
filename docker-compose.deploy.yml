@@ -1,23 +1,24 @@
 # Deploy-host overlay. Use with:
 #   docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d
+# or set COMPOSE_FILE in .env (see .env.example) and just run
+#   docker compose up -d
 #
-# Tailored for an existing host that already runs nginx-proxy-manager
-# binding 80/443. We:
-#   - remove caddy (conflicts with NPM)
-#   - bind api's public listener to host port 8090 instead of behind caddy
-#   - keep auth-broker out of the default `up` until a Tailscale API key
-#     is configured (see profiles)
-#   - skip ui (nothing to serve yet)
-#   - skip minio (no blobs yet)
-#   - skip dnsmasq (host's LAN already has DHCP; LAN-PXE profile not used)
+# For a host that already runs something on 80/443 (nginx-proxy-manager,
+# Traefik, another Caddy…). We:
+#   - drop caddy, which would fight for those ports
+#   - publish the api directly on ${API_HOST_PORT}
+#   - skip minio (enable the with-minio profile once you ingest blobs)
+#
+# EVERYTHING HOST-SPECIFIC IN HERE COMES FROM .env. Do not hardcode your
+# IP, NIC or ports in this file — it is version-controlled, so a later
+# `git pull` would overwrite them and take your deployment down. Put the
+# values in .env instead, and any extra local tuning (memory limits,
+# extra mounts) in docker-compose.local.yml, which is gitignored.
 
 services:
 
   caddy:
     profiles: ["with-caddy"]   # disabled by default
-
-  ui:
-    profiles: ["with-ui"]      # disabled by default
 
   minio:
     profiles: ["with-minio"]   # disabled by default
@@ -26,28 +27,27 @@ services:
     profiles: ["with-minio"]
 
   auth-broker:
-    profiles: ["with-broker"]  # enable once TAILSCALE_API_KEY is set
-
-  dnsmasq:
-    profiles: ["lan-pxe"]      # already disabled by default
-    environment:
-      LISTEN_INTERFACE: eth0
-      SUBNET: 192.168.200.0
-      TFTP_SERVER_IP: 192.168.200.23
-      DEPLOY_FQDN: docker.tailb0b06a.ts.net
+    profiles: ["with-broker"]  # enable once a tailnet API key is configured
 
   api:
     ports:
-      # Bind only on the LAN interface (192.168.200.23). The Tailscale
-      # interface (100.85.18.119) is reserved for `tailscale serve`,
-      # which proxies https://docker.tailb0b06a.ts.net:18080/ → here.
-      # Matches the convention used by librespeed/explorer/etc.
-      - "192.168.200.23:18080:8080"
-    environment:
-      DEPLOY_FQDN: ${DEPLOY_FQDN:-docker.tailb0b06a.ts.net}
-      API_PUBLIC_URL: ${API_PUBLIC_URL:-https://docker.tailb0b06a.ts.net:18080}
+      # API_BIND_ADDR pins the api to one interface. Default 0.0.0.0
+      # publishes on every interface, which on a host that is also on a
+      # tailnet means the api is reachable from the tailnet too — set it
+      # to your LAN IP if you do not want that.
+      - "${API_BIND_ADDR:-0.0.0.0}:${API_HOST_PORT:-18080}:8080"
 
   http-boot:
-    # No host port — only reachable via the docker network.
+    # No host port — only reachable via the docker network and caddy.
     environment:
       API_INTERNAL_URL: https://api:8443
+
+  dnsmasq:
+    profiles: ["lan-pxe"]
+    environment:
+      # proxyDHCP has to run on the NIC facing the target machines, and
+      # it must be the real interface name on this host (`ip -br link`).
+      LISTEN_INTERFACE: ${PXE_INTERFACE:?set PXE_INTERFACE in .env, e.g. eth0}
+      SUBNET: ${PXE_SUBNET:?set PXE_SUBNET in .env, e.g. 192.168.1.0}
+      TFTP_SERVER_IP: ${PXE_TFTP_SERVER_IP:?set PXE_TFTP_SERVER_IP in .env}
+      DEPLOY_FQDN: ${DEPLOY_FQDN}

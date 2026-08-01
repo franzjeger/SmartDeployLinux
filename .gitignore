@@ -3,6 +3,11 @@
 .env.local
 .env.production
 secrets/
+
+# Per-host compose tuning (memory limits, extra mounts, local ports).
+# Add it to COMPOSE_FILE in .env. Kept out of git so `git pull` can
+# never overwrite a running host's configuration.
+docker-compose.local.yml
 *.pem
 !ipxe/certs/.gitkeep
 !docs/**/*.pem
