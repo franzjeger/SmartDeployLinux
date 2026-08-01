@@ -119,6 +119,15 @@ services:
       LOG_FORMAT: ${LOG_FORMAT}
     volumes:
       - ./secrets:/secrets:ro
+    # The runtime image is distroless — no shell, no curl — so the probe
+    # has to be the binary itself. Without this, a container that has
+    # crashed its listener still reports "Up" in `docker compose ps`.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/api", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   auth-broker:
     image: ${REGISTRY:-localhost}/deployserver-auth-broker:${TAG:-dev}
@@ -157,6 +166,15 @@ services:
       INTERNAL_TLS_KEY: /secrets/http-boot-key.pem
     volumes:
       - ./secrets:/secrets:ro
+    # Probes BOTH halves of the container. nginx (:8443) serving while
+    # render (:8444) is dead still breaks every /boot/* route, and vice
+    # versa, so checking one alone would hide a half-dead container.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsk https://localhost:8443/healthz && curl -fs http://localhost:8444/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   worker:
     image: ${REGISTRY:-localhost}/deployserver-worker:${TAG:-dev}
