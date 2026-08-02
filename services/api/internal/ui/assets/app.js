@@ -382,7 +382,23 @@ async function navigate() {
     const result = await m.handler(m.params);
     if (typeof result === "function") currentCleanup = result;
   } catch (e) {
-    $("#content").innerHTML = `<div class="page"><div class="banner err">${escapeHTML(e.message)}</div></div>`;
+    // A failed view used to render the bare exception message and nothing
+    // else — no heading, no way back, no way to retry. Give the operator
+    // something actionable and keep the detail available for a bug report.
+    console.error("view failed:", hash, e);
+    $("#content").innerHTML = `
+      <div class="page">
+        <div class="card"><div class="empty">
+          <div class="empty-icon">!</div>
+          <div>This view failed to load.</div>
+          <p class="small muted">${escapeHTML(e && e.message ? e.message : String(e))}</p>
+          <p class="page-actions">
+            <button class="btn" id="err-retry">Retry</button>
+            <a class="btn secondary" href="#/">Back to dashboard</a>
+          </p>
+        </div></div>
+      </div>`;
+    $("#err-retry")?.addEventListener("click", navigate);
   }
 }
 
@@ -497,7 +513,15 @@ route("/", async () => {
 
       <div class="cards" style="margin-top: 16px;">
         <div class="card compact"><h3>Machines</h3><div class="stat">${machines.length}</div><div class="stat-sub">registered</div></div>
-        <div class="card compact"><h3>Live deployments</h3><div class="stat">${liveJobs.length}</div><div class="stat-sub">in progress</div></div>
+        <div class="card compact"><h3>Live deployments</h3><div class="stat">${liveJobs.length}</div>
+          <div class="stat-sub">${(() => {
+            const stale = liveJobs.filter(jobIsStale).length;
+            if (!liveJobs.length) return "in progress";
+            // Without this, a job that died months ago is indistinguishable
+            // from one running right now, and the tile reads as a
+            // contradiction next to the window-scoped "Active now".
+            return stale ? `${liveJobs.length - stale} in progress · ${stale} stale` : "in progress";
+          })()}</div></div>
         <div class="card compact"><h3>Images</h3><div class="stat">${images.length}</div><div class="stat-sub">in library</div></div>
         <div class="card compact"><h3>Profiles</h3><div class="stat">${profiles.length}</div><div class="stat-sub">configured</div></div>
       </div>
@@ -517,7 +541,8 @@ route("/", async () => {
           <div class="stat">${summary.completed + summary.failed ? Math.round(summary.success_rate * 100) + "%" : "—"}</div>
           <div class="stat-sub">${summary.completed} ok · ${summary.failed} failed</div></div>
         <div class="card compact"><h3>Avg duration</h3><div class="stat">${fmtDuration(summary.avg_duration_secs)}</div><div class="stat-sub">completed deploys</div></div>
-        <div class="card compact"><h3>Active now</h3><div class="stat">${summary.active}</div><div class="stat-sub">in flight</div></div>
+        <div class="card compact"><h3>Active now</h3><div class="stat">${summary.active}</div>
+          <div class="stat-sub">in flight · started in window</div></div>
       </div>
 
       <div class="card" style="margin-top:12px;">
@@ -600,13 +625,29 @@ function stateBadgeForAction(action) {
   return `<span class="badge"><span class="dot"></span>·</span>`;
 }
 
+// A deployment that stops phoning home just sits in its last state for
+// ever: nothing times it out, so the dashboard keeps counting it as live
+// and the operator has no signal that it is never coming back. Flag the
+// ones that have not moved in a long time so a dead job looks dead.
+const JOB_STALE_AFTER_MS = 6 * 60 * 60 * 1000; // 6h
+const JOB_TERMINAL_STATES = ["completed", "failed", "cancelled"];
+
+function jobIsStale(j) {
+  if (JOB_TERMINAL_STATES.includes(j.state)) return false;
+  const since = Date.parse(j.started_at || j.created_at);
+  if (!Number.isFinite(since)) return false;
+  return Date.now() - since > JOB_STALE_AFTER_MS;
+}
+
 function jobsTable(jobs) {
   return `<div class="table-wrap"><table>
     <thead><tr><th>Status</th><th>Machine</th><th>Profile</th><th>Started</th><th></th></tr></thead>
     <tbody>
       ${jobs.map(j => `
         <tr onclick="location.hash='#/jobs/${j.id}'">
-          <td>${stateBadge(j.state)}</td>
+          <td>${stateBadge(j.state)}${jobIsStale(j)
+            ? ` <span class="badge warn" title="No progress in over 6 hours — the target most likely never finished.">stale</span>`
+            : ""}</td>
           <td>${escapeHTML(j.machine_asset_tag || trunc(j.machine_id))}</td>
           <td>${escapeHTML(j.profile_name)}</td>
           <td class="mono small muted">${fmtTime(j.started_at || j.created_at)}</td>
@@ -2454,7 +2495,9 @@ route("/audit", async () => {
             <tr class="no-hover">
               <td>${stateBadgeForAction(e.action)}</td>
               <td><code>${escapeHTML(e.action)}</code></td>
-              <td class="muted small">${escapeHTML(e.actor_kind || "")}<br><span class="mono">${escapeHTML(trunc(e.actor_id))}</span></td>
+              <td class="muted small">${escapeHTML(e.actor_kind || "")}<br>${e.actor_email
+                ? `<span title="${escapeHTML(e.actor_id || "")}">${escapeHTML(e.actor_email)}</span>`
+                : `<span class="mono">${escapeHTML(trunc(e.actor_id))}</span>`}</td>
               <td class="muted small">${escapeHTML(e.subject_kind || "")}<br><span class="mono">${escapeHTML(trunc(e.subject_id))}</span></td>
               <td class="mono small">${escapeHTML(e.source_ip || "—")}</td>
               <td class="mono small muted">${fmtAbsolute(e.at)}</td>
@@ -2485,9 +2528,14 @@ async function boot() {
     const me = await api("GET", "/api/v1/me");
     if (me.dev_mode) $("#dev-banner").classList.remove("hidden");
     const info = $("#user-info");
-    info.textContent = me.user_id && me.user_id !== "00000000-0000-0000-0000-000000000000"
-      ? `user ${trunc(me.user_id, 8)}`
+    const signedIn = me.user_id && me.user_id !== "00000000-0000-0000-0000-000000000000";
+    // Prefer the email claim. A truncated UUID identifies nobody — the
+    // operator cannot tell which account they are signed in as, which
+    // matters as soon as more than one person administers the server.
+    info.textContent = signedIn
+      ? (me.email || `user ${trunc(me.user_id, 8)}`)
       : "anonymous (dev mode)";
+    if (signedIn && me.email) info.title = me.user_id;
     if (!authCfg.dev_mode) {
       info.insertAdjacentHTML("afterend",
         ` <a href="#" id="logout-link" class="small">log out</a>`);

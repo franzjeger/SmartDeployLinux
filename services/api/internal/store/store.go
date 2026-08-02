@@ -1919,6 +1919,35 @@ type UserWithRoles struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// UserEmailsByID resolves a set of user ids to their email addresses in
+// one round trip. The audit log reads as a wall of UUIDs otherwise, which
+// defeats the point of having an audit log — the reader has to go look up
+// every actor by hand to answer "who did this".
+//
+// Ids with no matching row are simply absent from the result: users can be
+// deleted, and their past actions must still render.
+func (s *Store) UserEmailsByID(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, email::text FROM users WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var email string
+		if err := rows.Scan(&id, &email); err != nil {
+			return nil, err
+		}
+		out[id] = email
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListUsersWithRoles(ctx context.Context, limit, offset int) ([]UserWithRoles, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100

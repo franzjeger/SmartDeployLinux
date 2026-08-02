@@ -513,6 +513,13 @@ func (h *handlers) listMachines(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
+	// See listSticks: a nil slice marshals to `null`, and the UI calls
+	// .filter() on this straight away. On a fresh install with nothing
+	// registered yet, that turned the Machines page — the first screen a
+	// new operator lands on — into a raw JavaScript error.
+	if machines == nil {
+		machines = []store.Machine{}
+	}
 	writeJSON(w, 200, machines)
 }
 
