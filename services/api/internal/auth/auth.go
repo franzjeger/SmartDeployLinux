@@ -126,6 +126,17 @@ func HasPerm(ctx context.Context, perm string) bool {
 	return ok
 }
 
+// Email returns the principal's email claim, or "" when the request has
+// no principal (dev mode) or the IdP issued no email. Callers use it to
+// show operators who they are signed in as; a UUID tells them nothing.
+func Email(ctx context.Context) string {
+	p, ok := ctx.Value(ctxKeyPrincipal).(*principal)
+	if !ok || p == nil {
+		return ""
+	}
+	return p.Email
+}
+
 // UserID returns the principal's local user UUID, or uuid.Nil if the
 // request has no principal (dev mode).
 func UserID(ctx context.Context) uuid.UUID {

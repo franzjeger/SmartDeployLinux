@@ -206,6 +206,13 @@ func (h *handlers) listSticks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "list: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// A nil slice marshals to `null`, not `[]`, and every consumer then has
+	// to special-case it — the operator UI did not, and rendered a raw
+	// "Cannot read properties of null" in place of the whole page whenever
+	// no sticks were registered. Which is every fresh install.
+	if sticks == nil {
+		sticks = []store.BootstrapStick{}
+	}
 	writeJSON(w, http.StatusOK, sticks)
 }
 
@@ -254,19 +261,44 @@ func (h *handlers) queryAudit(w http.ResponseWriter, r *http.Request) {
 		At          time.Time       `json:"at"`
 		ActorID     *uuid.UUID      `json:"actor_id"`
 		ActorKind   string          `json:"actor_kind"`
+		ActorEmail  string          `json:"actor_email,omitempty"`
 		Action      string          `json:"action"`
 		SubjectID   *uuid.UUID      `json:"subject_id"`
 		SubjectKind *string         `json:"subject_kind"`
 		Data        json.RawMessage `json:"data"`
 		SourceIP    *string         `json:"source_ip"`
 	}
+
+	// Resolve actor ids to emails in one query rather than per row.
+	// Failing to resolve is not fatal — the log still renders with ids.
+	var actorIDs []uuid.UUID
+	seen := map[uuid.UUID]struct{}{}
+	for _, r := range rows {
+		if r.ActorKind != "user" || r.ActorID == nil {
+			continue
+		}
+		if _, dup := seen[*r.ActorID]; dup {
+			continue
+		}
+		seen[*r.ActorID] = struct{}{}
+		actorIDs = append(actorIDs, *r.ActorID)
+	}
+	emails, err := h.store.UserEmailsByID(r.Context(), actorIDs)
+	if err != nil {
+		emails = map[uuid.UUID]string{}
+	}
+
 	out := make([]respRow, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, respRow{
+		row := respRow{
 			ID: r.ID, At: r.At, ActorID: r.ActorID, ActorKind: r.ActorKind,
 			Action: r.Action, SubjectID: r.SubjectID, SubjectKind: r.SubjectKind,
 			Data: r.Data, SourceIP: r.SourceIP,
-		})
+		}
+		if r.ActorID != nil {
+			row.ActorEmail = emails[*r.ActorID]
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -957,6 +989,7 @@ func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 	dev := h.verifier == nil
 	out := map[string]any{
 		"user_id":  uid,
+		"email":    auth.Email(r.Context()),
 		"dev_mode": dev,
 	}
 	writeJSON(w, http.StatusOK, out)
