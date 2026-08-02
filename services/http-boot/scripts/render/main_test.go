@@ -26,8 +26,9 @@ func render(t *testing.T, tplName string) string {
 	var sb strings.Builder
 	tplData := struct {
 		*machineProfileResp
-		DeployFQDN string
-	}{data, "deploy.example.com"}
+		DeployFQDN   string
+		UserDataBase string
+	}{data, "deploy.example.com", "https://deploy.example.com"}
 	tpl := linuxTpl
 	if tplName == "windows" {
 		tpl = windowsTpl
@@ -79,8 +80,9 @@ func TestLinuxTemplateChainURL(t *testing.T) {
 	var sb strings.Builder
 	tplData := struct {
 		*machineProfileResp
-		DeployFQDN string
-	}{data, "deploy.example.com"}
+		DeployFQDN   string
+		UserDataBase string
+	}{data, "deploy.example.com", "https://deploy.example.com"}
 	if err := linuxTpl.Execute(&sb, tplData); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -106,8 +108,9 @@ func TestLinuxTemplateAppendsKernelArgs(t *testing.T) {
 	var sb strings.Builder
 	tplData := struct {
 		*machineProfileResp
-		DeployFQDN string
-	}{data, "deploy.example.com"}
+		DeployFQDN   string
+		UserDataBase string
+	}{data, "deploy.example.com", "https://deploy.example.com"}
 	if err := linuxTpl.Execute(&sb, tplData); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -127,5 +130,19 @@ func TestWindowsTemplateInjectsToken(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+// The installer hop must be switchable to plain HTTP: an OS installer's
+// initrd trusts only public CAs, so an internal-CA deploy server is
+// unreachable over TLS from cloud-init.
+func TestUserDataBaseHonoursHTTPPort(t *testing.T) {
+	t.Setenv("NOCLOUD_HTTP_PORT", "")
+	if got := userDataBase("deploy.example.com"); got != "https://deploy.example.com" {
+		t.Fatalf("default must stay HTTPS, got %q", got)
+	}
+	t.Setenv("NOCLOUD_HTTP_PORT", "8080")
+	if got := userDataBase("deploy.example.com"); got != "http://deploy.example.com:8080" {
+		t.Fatalf("http override: %q", got)
 	}
 }

@@ -203,7 +203,7 @@ echo Deploying {{.Profile.Name}} to {{.Machine.AssetTag}} ({{.Machine.ID}})
 {{if .Image.ChainURL -}}
 chain {{.Image.ChainURL}}
 {{- else -}}
-kernel {{.Image.KernelURL}} initrd=initrd autoinstall ip=dhcp "ds=nocloud-net;s=https://{{.DeployFQDN}}/boot/{{.OneShotToken}}/"{{if .Image.KernelArgs}} {{.Image.KernelArgs}}{{end}}
+kernel {{.Image.KernelURL}} initrd=initrd autoinstall ip=dhcp "ds=nocloud-net;s={{.UserDataBase}}/boot/{{.OneShotToken}}/"{{if .Image.KernelArgs}} {{.Image.KernelArgs}}{{end}}
 initrd {{.Image.InitrdURL}}
 boot
 {{- end}}
@@ -217,13 +217,29 @@ imgargs wimboot _DEPLOY_JOB_ID={{.JobID}} _DEPLOY_TOKEN={{.OneShotToken}} _DEPLO
 boot
 `))
 
+// userDataBase is the origin an OS installer fetches its answer file
+// from. It is deliberately separate from the iPXE hop: iPXE has our CA
+// embedded and speaks HTTPS happily, but an installer initrd trusts
+// only public CAs, so an internal-CA deploy server is unreachable over
+// TLS from cloud-init. NOCLOUD_HTTP_PORT selects the plain-HTTP
+// listener for that one hop; unset keeps the HTTPS default, which is
+// correct whenever the server has a publicly-trusted certificate.
+func userDataBase(fqdn string) string {
+	if p := os.Getenv("NOCLOUD_HTTP_PORT"); p != "" {
+		return "http://" + fqdn + ":" + p
+	}
+	return "https://" + fqdn
+}
+
 func (h *handlers) writeIPXE(w http.ResponseWriter, _ *http.Request, data *machineProfileResp) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	fqdn := getenv("DEPLOY_FQDN", "deploy.example.com")
 	tplData := struct {
 		*machineProfileResp
-		DeployFQDN string
-	}{data, getenv("DEPLOY_FQDN", "deploy.example.com")}
+		DeployFQDN   string
+		UserDataBase string
+	}{data, fqdn, userDataBase(fqdn)}
 
 	switch strings.ToLower(data.Image.OSFamily) {
 	case "linux":

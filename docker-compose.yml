@@ -165,6 +165,10 @@ services:
     environment:
       <<: *common-env
       API_INTERNAL_URL: https://api:8443
+      # Set to the published plain-HTTP port to serve installer answer
+      # files over HTTP (required when the server uses an internal CA —
+      # see the nginx :8080 block). Unset keeps the HTTPS default.
+      NOCLOUD_HTTP_PORT: ${NOCLOUD_HTTP_PORT}
       INTERNAL_TLS_CERT: /secrets/http-boot.pem
       INTERNAL_TLS_KEY: /secrets/http-boot-key.pem
     volumes:
