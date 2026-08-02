@@ -349,3 +349,11 @@ type VendorFetchJob struct {
 	StartedAt     *string  `json:"started_at"`
 	FinishedAt    *string  `json:"finished_at"`
 }
+
+// ProfilePreview is the result of rendering a profile template.
+type ProfilePreview struct {
+	Rendered  string `json:"rendered"`
+	YAMLValid bool   `json:"yaml_valid"`
+	YAMLError string `json:"yaml_error"`
+	Fallback  bool   `json:"fallback"`
+}

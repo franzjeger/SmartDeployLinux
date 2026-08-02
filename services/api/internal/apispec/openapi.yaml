@@ -193,6 +193,25 @@ paths:
       responses:
         "204": { description: Deleted }
 
+  /api/v1/profiles/{id}/preview:
+    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    post:
+      tags: [profiles]
+      summary: Preview a profile's rendered answer file
+      description: "Requires `profile.read`. Renders the stored template (or a provided draft body) with a synthetic machine context and reports whether the output is well-formed YAML — catching typos in the editor instead of on hardware."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind: { type: string, enum: [autoinstall, cloud-init] }
+                body: { type: string, description: "Draft template to preview instead of the stored one" }
+      responses:
+        "200": { description: "Rendered output + YAML validity" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/profiles/{id}/templates:
     parameters: [{ $ref: "#/components/parameters/IdPath" }]
     put:

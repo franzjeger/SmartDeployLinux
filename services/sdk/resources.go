@@ -156,6 +156,18 @@ func (c *Client) DeleteDriverPackVersion(ctx context.Context, versionID string) 
 	return c.do(ctx, opDeleteDriverVersion, map[string]string{"id": versionID}, nil, nil, nil)
 }
 
+// PreviewProfileTemplate renders a profile's answer-file template with a
+// synthetic machine context and reports YAML validity. Pass a non-nil
+// body to preview a draft instead of the stored template.
+func (c *Client) PreviewProfileTemplate(ctx context.Context, profileID, kind string, body *string) (*ProfilePreview, error) {
+	in := map[string]any{"kind": kind}
+	if body != nil {
+		in["body"] = *body
+	}
+	var out ProfilePreview
+	return &out, c.do(ctx, opPreviewProfile, map[string]string{"id": profileID}, nil, in, &out)
+}
+
 // --- vendor driver-pack catalogs --------------------------------------
 
 // SearchVendorDriverPacks searches the vendor driver-pack catalogs by

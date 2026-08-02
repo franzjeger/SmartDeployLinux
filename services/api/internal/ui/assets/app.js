@@ -1598,10 +1598,12 @@ route("/profiles/:id", async ({ id }) => {
             <div class="btn-row" style="margin-top: 8px; justify-content: space-between;">
               <div>
                 <button class="btn small" id="tpl-save">Save template</button>
+                <button class="btn small secondary" id="tpl-validate">Validate &amp; preview</button>
                 ${tplByKind[activeKind] ? `<button class="btn small danger" id="tpl-delete">Delete template</button>` : ""}
               </div>
               <span id="tpl-status" class="muted small">${tplByKind[activeKind] ? `Last saved ${fmtTime(tplByKind[activeKind].updated_at)}` : "Not yet saved"}</span>
             </div>
+            <div id="tpl-preview"></div>
           </div>
         </div>
       </div>`;
@@ -1622,6 +1624,26 @@ route("/profiles/:id", async ({ id }) => {
         toast("Variables saved", "ok");
       } catch (e) {
         status.textContent = "Error: " + e.message; status.className = "err small";
+      }
+    });
+
+    $("#tpl-validate").addEventListener("click", async () => {
+      const body = $("#tpl-editor").value;
+      const box = $("#tpl-preview");
+      box.innerHTML = `<div class="muted small" style="margin-top:8px;">Rendering…</div>`;
+      try {
+        // Validates the DRAFT in the editor, not the saved copy — the
+        // whole point is catching mistakes before they are saved.
+        const p = await api("POST", `/api/v1/profiles/${id}/preview`, { kind: activeKind, body });
+        box.innerHTML = `
+          ${p.yaml_valid
+            ? `<div class="banner info" style="margin-top:8px;">✓ Renders cleanly and is well-formed YAML.</div>`
+            : `<div class="banner err" style="margin-top:8px;">✗ ${escapeHTML(p.yaml_error)}</div>`}
+          ${p.rendered ? `
+            <div class="section-title" style="margin-top:10px;">Rendered with a synthetic machine</div>
+            <pre style="max-height:280px;overflow:auto;font-size:12px;background:var(--bg-inset,rgba(0,0,0,.25));padding:12px;border-radius:6px;">${escapeHTML(p.rendered)}</pre>` : ""}`;
+      } catch (e) {
+        box.innerHTML = `<div class="banner err" style="margin-top:8px;">${escapeHTML(e.message)}</div>`;
       }
     });
 

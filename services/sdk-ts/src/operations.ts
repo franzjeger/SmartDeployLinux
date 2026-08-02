@@ -38,6 +38,7 @@ export const OPERATIONS = {
   deleteProfile: op("deleteProfile", "DELETE", "/api/v1/profiles/{id}"),
   upsertProfileTemplate: op("upsertProfileTemplate", "PUT", "/api/v1/profiles/{id}/templates"),
   deleteProfileTemplate: op("deleteProfileTemplate", "DELETE", "/api/v1/profiles/{id}/templates/{kind}"),
+  previewProfileTemplate: op("previewProfileTemplate", "POST", "/api/v1/profiles/{id}/preview"),
 
   listImages: op("listImages", "GET", "/api/v1/images"),
   createImage: op("createImage", "POST", "/api/v1/images"),
