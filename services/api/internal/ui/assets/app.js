@@ -2111,7 +2111,8 @@ route("/drivers", async () => {
               <td class="mono small">${(p.size_bytes / 1048576).toFixed(1)} MiB</td>
               <td class="small">${p.rules.map(r => `<code>${escapeHTML(r.type)}=${escapeHTML(r.value)}</code>`).join("<br>") || "—"}</td>
               <td class="muted small">${fmtTime(p.created_at)}</td>
-              <td><button class="btn small danger" data-del="${p.version_id}">Delete</button></td>
+              <td><button class="btn small danger" data-del="${p.version_id}"
+                data-label="${escapeHTML(`${p.vendor} ${p.model} (${p.version_tag})`)}">Delete</button></td>
             </tr>`).join("")}
           </tbody>
         </table></div>` : `
@@ -2125,7 +2126,9 @@ route("/drivers", async () => {
   $$("#content [data-del]").forEach(btn => btn.addEventListener("click", async () => {
     const ok = await confirmModal({
       title: "Delete driver pack version",
-      message: "Machines matching this pack will fall back to in-box drivers.",
+      // Same problem as revoke: every version row has an identical
+      // Delete button, so the operator needs to see which one this is.
+      message: `Delete ${btn.dataset.label || "this driver pack version"}? Machines matching this pack will fall back to in-box drivers.`,
       danger: true, primaryLabel: "Delete",
     });
     if (!ok) return;
@@ -2409,7 +2412,7 @@ route("/users", async () => {
             <td>${u.oidc_linked ? `<span class="badge ok"><span class="dot"></span>linked</span>` : `<span class="badge"><span class="dot"></span>pending</span>`}</td>
             <td>${(u.roles || []).map(role => `
               <span class="chip">${escapeHTML(role)}
-                <a href="#" class="revoke-role" data-user="${u.id}" data-role="${escapeHTML(role)}" title="Revoke">×</a>
+                <a href="#" class="revoke-role" data-user="${u.id}" data-email="${escapeHTML(u.email)}" data-role="${escapeHTML(role)}" title="Revoke">×</a>
               </span>`).join(" ") || `<span class="muted small">none</span>`}</td>
             <td class="muted small">${fmtTime(u.created_at)}</td>
             <td>
@@ -2445,7 +2448,11 @@ route("/users", async () => {
     e.preventDefault();
     const ok = await confirmModal({
       title: "Revoke role",
-      message: `Remove the "${a.dataset.role}" role from this user?`,
+      // Name the user. Every row in this table carries an identical
+      // "admin ×" chip, so "this user" leaves the operator no way to
+      // tell whether they clicked the row they meant — and revoking
+      // admin from the wrong account is not obvious afterwards either.
+      message: `Remove the "${a.dataset.role}" role from ${a.dataset.email || "this user"}?`,
       danger: true, primaryLabel: "Revoke",
     });
     if (!ok) return;
