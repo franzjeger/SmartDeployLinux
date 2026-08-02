@@ -19,14 +19,16 @@ IPXE_REF ?= v1.21.1
 IPXE_REPO?= https://github.com/ipxe/ipxe.git
 
 CA_CERT  ?= certs/deploy-ca.pem
-EMBED    ?= embed.script
+EMBED    := $(WORK)/embed.script
 MOK_KEY  ?= ../bootstrap/keys/MOK.priv
 MOK_CRT  ?= ../bootstrap/keys/MOK.crt
 
 WORK     := build
 SRC      := $(WORK)/ipxe-src
 
-CONFIG_PATCHES := patches/general.h.patch
+# The deploy server URL baked into the embedded script. MUST be set per
+# deployment (see embed.script) — the default is a placeholder.
+DEPLOY_URL ?= https://deploy.example.com
 
 all: $(WORK)/ipxe.efi $(WORK)/undionly.kpxe $(WORK)/snponly.efi
 
@@ -35,33 +37,37 @@ $(SRC)/.cloned:
 	git clone --depth 1 --branch $(IPXE_REF) $(IPXE_REPO) $(SRC)
 	touch $@
 
-$(SRC)/src/config/local/general.h: $(SRC)/.cloned $(CONFIG_PATCHES)
+# Feature overrides use iPXE's supported local-config mechanism
+# (config/local/*.h) instead of a context patch against general.h.
+# The previous patches/general.h.patch did not even apply against the
+# pinned v1.21.1 tree — `make build-ipxe` has never completed — and a
+# context patch breaks again every time upstream reflows the file.
+$(SRC)/src/config/local/general.h: $(SRC)/.cloned
 	mkdir -p $(SRC)/src/config/local
-	cp $(SRC)/src/config/general.h $@.tmp
-	# Apply our overrides via patch (kept in patches/ so the diff is
-	# reviewable; we do NOT just dump a fresh file because iPXE's defaults
-	# move and we want to inherit upstream changes).
-	patch -p1 -d $(SRC) < patches/general.h.patch
-	mv $@.tmp $@
+	printf '#define IMAGE_TRUST_CMD\n#define CERT_CMD\n#define NSLOOKUP_CMD\n#define NTP_CMD\n#define DOWNLOAD_PROTO_HTTPS\n' > $@
 
-$(WORK)/ipxe.efi: $(SRC)/.cloned $(EMBED) $(CA_CERT)
-	$(MAKE) -C $(SRC)/src \
+$(WORK)/embed.script: embed.script
+	mkdir -p $(WORK)
+	sed 's|https://deploy.example.com|$(DEPLOY_URL)|' $< > $@
+
+$(WORK)/ipxe.efi: $(SRC)/.cloned $(SRC)/src/config/local/general.h $(EMBED) $(CA_CERT)
+	$(MAKE) -C $(SRC)/src NO_WERROR=1 \
 		EMBED=$(abspath $(EMBED)) \
 		TRUST=$(abspath $(CA_CERT)) \
 		CERT=$(abspath $(CA_CERT)) \
 		bin-x86_64-efi/ipxe.efi
 	cp $(SRC)/src/bin-x86_64-efi/ipxe.efi $@
 
-$(WORK)/snponly.efi: $(SRC)/.cloned $(EMBED) $(CA_CERT)
-	$(MAKE) -C $(SRC)/src \
+$(WORK)/snponly.efi: $(SRC)/.cloned $(SRC)/src/config/local/general.h $(EMBED) $(CA_CERT)
+	$(MAKE) -C $(SRC)/src NO_WERROR=1 \
 		EMBED=$(abspath $(EMBED)) \
 		TRUST=$(abspath $(CA_CERT)) \
 		CERT=$(abspath $(CA_CERT)) \
 		bin-x86_64-efi/snponly.efi
 	cp $(SRC)/src/bin-x86_64-efi/snponly.efi $@
 
-$(WORK)/undionly.kpxe: $(SRC)/.cloned $(EMBED) $(CA_CERT)
-	$(MAKE) -C $(SRC)/src \
+$(WORK)/undionly.kpxe: $(SRC)/.cloned $(SRC)/src/config/local/general.h $(EMBED) $(CA_CERT)
+	$(MAKE) -C $(SRC)/src NO_WERROR=1 \
 		EMBED=$(abspath $(EMBED)) \
 		TRUST=$(abspath $(CA_CERT)) \
 		CERT=$(abspath $(CA_CERT)) \
