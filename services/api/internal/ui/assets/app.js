@@ -415,6 +415,85 @@ function setBreadcrumb(parts) {
   }).join('<span class="sep">›</span>');
 }
 
+// ---------- views: Guide ----------
+//
+// In-app operator guide. Every operation lives elsewhere in the UI; this
+// page exists so nobody has to read the repo docs to run their first
+// deployment. Keep every step actionable — link straight to the page it
+// happens on.
+
+route("/guide", async () => {
+  setBreadcrumb([{label: "Guide"}]);
+  const step = (n, title, body) => `
+    <div class="card" style="margin-bottom:12px;">
+      <h3 style="margin-top:0;"><span class="badge info">${n}</span> ${title}</h3>
+      ${body}
+    </div>`;
+  $("#content").innerHTML = `
+    <div class="page">
+      <div class="page-title"><div>
+        <h1>Guide</h1>
+        <p class="subtitle">From zero to a deployed machine. Each step links to the page where it happens.</p>
+      </div></div>
+
+      <div class="section-title">Deploy Linux in five steps</div>
+      ${step(1, `Add an image — <a href="#/images">Images</a>`, `
+        <p class="small">Click <strong>⊞ Browse catalog</strong> and pick a distro. Done — catalog entries
+        come with working boot URLs. Entries marked <code>chain_url</code> boot via netboot.xyz and need
+        nothing else. To point at your own mirror instead, open the image and use
+        <strong>Fill from catalog…</strong> as a starting point.</p>`)}
+      ${step(2, `Create a profile — <a href="#/profiles">Profiles</a>`, `
+        <p class="small">A profile = image + install answers (hostname pattern, disk layout, user account).
+        <strong>+ New profile</strong>, pick your image, start from a template. One profile serves any
+        number of machines.</p>`)}
+      ${step(3, `Register the target — <a href="#/machines">Machines</a>`, `
+        <p class="small"><strong>+ Register machine</strong> with an asset tag (any name you like).
+        MAC is optional — needed only for LAN-PXE boot; the USB stick path identifies machines by
+        deployment code instead.</p>`)}
+      ${step(4, `Issue a deployment — <a href="#/deploy">New deployment</a>`, `
+        <p class="small">Pick machine + profile → you get a single-use 6-character code like
+        <code>4A7-K2P</code>. It expires after 24h and one use.</p>`)}
+      ${step(5, `Boot the target`, `
+        <p class="small">Plug in a bootstrap USB stick, boot from it, type the code. Walk away —
+        the job goes <em>bootstrapped → imaging → completed</em> on <a href="#/jobs">Jobs</a>.
+        No stick yet? <a href="#/sticks">Bootstrap sticks</a> → <strong>Generate stick config</strong>
+        gives you the exact build command. On a LAN with the PXE listener enabled, machines can
+        also network-boot straight into the <a href="#/machines">assigned profile</a>.</p>`)}
+
+      <div class="section-title">Driver packs (Windows targets)</div>
+      <div class="card" style="margin-bottom:12px;">
+        <p class="small">Windows in-box drivers cover generic hardware. For anything exotic
+        (NICs, storage, docks): <a href="#/drivers">Driver packs</a> → <strong>+ Add driver pack</strong>,
+        upload the vendor's pack for the model, and add a match rule — usually
+        <code>dmi-product</code> = the model string. At deploy time the pack whose rules match the
+        target's hardware fingerprint is injected automatically (DISM /Add-Driver).</p>
+        <p class="small muted">Where to get packs: Dell, Lenovo and HP publish per-model
+        <em>enterprise driver packs</em> (search "&lt;model&gt; driver pack" or use Dell/Lenovo/HP's
+        SCCM pack pages). One-click fetching of these straight from the vendor catalogs is designed
+        and tracked in <a href="https://github.com/franzjeger/SmartDeployLinux/issues/18" target="_blank">issue #18</a>.</p>
+      </div>
+
+      <div class="section-title">Good to know</div>
+      <div class="card">
+        <ul class="small" style="margin:0;padding-left:18px;line-height:1.8;">
+          <li><strong>Chain URL vs kernel/initrd:</strong> a chain URL hands boot to another iPXE
+            script (netboot.xyz menus, live ISOs) — simplest, needs one field. kernel+initrd is the
+            classic unattended-install path and is what profiles' answer files apply to.</li>
+          <li><strong>Self-hosting media:</strong> upload a version on an image's page and it is
+            served from this server's blob store — targets stop depending on upstream mirrors, and
+            <a href="#/sites">Sites</a> with an edge box cache it per location.</li>
+          <li><strong>Windows images</strong> need three URLs (wimboot, WinPE boot.wim, install.wim)
+            — building those is covered in <code>docs/WINDOWS.md</code> in the repo.</li>
+          <li><strong>Stale jobs:</strong> a job with no progress for 6h is flagged
+            <span class="badge warn">stale</span> — the target most likely never finished. Open it
+            and cancel; the machine can simply be deployed again.</li>
+          <li><strong>Everything here is API-first:</strong> <a href="/api/docs" target="_blank">API reference</a>
+            documents all 51 operations; Go and TypeScript SDKs ship in the repo.</li>
+        </ul>
+      </div>
+    </div>`;
+});
+
 // ---------- views: Dashboard ----------
 
 // ---------- report chart ----------
@@ -501,8 +580,18 @@ route("/", async () => {
   const liveJobs = jobs.filter(j => ["pending","bootstrapped","imaging","post_install"].includes(j.state));
   const recentDone = jobs.filter(j => ["completed","failed","cancelled"].includes(j.state));
 
+  // First-run: an empty dashboard full of zeros tells a new operator
+  // nothing about what to do. Point at the guide until the first machine
+  // exists.
+  const firstRun = machines.length === 0
+    ? `<div class="banner info" style="margin-bottom:16px;">New here? The
+        <a href="#/guide"><strong>Guide</strong></a> takes you from zero to a
+        deployed machine in five steps.</div>`
+    : "";
+
   $("#content").innerHTML = `
     <div class="page">
+      ${firstRun}
       <div class="page-title">
         <div>
           <h1>Dashboard</h1>
