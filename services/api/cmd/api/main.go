@@ -425,6 +425,7 @@ func (h *handlers) registerOperatorRoutes(r chi.Router) {
 	r.Get("/profiles/{id}", h.getProfile)
 	r.Patch("/profiles/{id}", h.updateProfile)
 	r.Delete("/profiles/{id}", h.deleteProfile)
+	r.Post("/profiles/{id}/preview", h.previewProfileTemplate)
 	r.Put("/profiles/{id}/templates", h.upsertProfileTemplate)
 	r.Delete("/profiles/{id}/templates/{kind}", h.deleteProfileTemplate)
 	r.Get("/images", h.listImages)

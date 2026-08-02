@@ -347,3 +347,11 @@ export interface VendorFetchJob {
   started_at: string | null;
   finished_at: string | null;
 }
+
+/** Result of rendering a profile template with a synthetic machine. */
+export interface ProfilePreview {
+  rendered: string;
+  yaml_valid: boolean;
+  yaml_error?: string;
+  fallback: boolean;
+}

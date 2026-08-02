@@ -34,6 +34,7 @@ import type {
   WakeInput,
   WakeRequest,
   WakeResult,
+  ProfilePreview,
   VendorPackEntry,
   VendorFetchJob,
 } from "./models.js";
@@ -300,6 +301,14 @@ export class DeployClient {
 
   deleteDriverPackVersion(versionId: string): Promise<void> {
     return this.#void(OPERATIONS.deleteDriverPackVersion, { params: { id: versionId } });
+  }
+
+  /** Render a profile template with a synthetic machine and check YAML validity. */
+  previewProfileTemplate(profileId: string, kind: "autoinstall" | "cloud-init", body?: string): Promise<ProfilePreview> {
+    return this.#json(OPERATIONS.previewProfileTemplate, {
+      params: { id: profileId },
+      body: body === undefined ? { kind } : { kind, body },
+    });
   }
 
   // --- vendor driver-pack catalogs ------------------------------------

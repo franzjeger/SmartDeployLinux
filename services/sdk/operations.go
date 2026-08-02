@@ -27,6 +27,7 @@ var (
 	opDeleteProfile       = Operation{"deleteProfile", "DELETE", "/api/v1/profiles/{id}"}
 	opUpsertTemplate      = Operation{"upsertProfileTemplate", "PUT", "/api/v1/profiles/{id}/templates"}
 	opDeleteTemplate      = Operation{"deleteProfileTemplate", "DELETE", "/api/v1/profiles/{id}/templates/{kind}"}
+	opPreviewProfile      = Operation{"previewProfileTemplate", "POST", "/api/v1/profiles/{id}/preview"}
 	opListImages          = Operation{"listImages", "GET", "/api/v1/images"}
 	opCreateImage         = Operation{"createImage", "POST", "/api/v1/images"}
 	opGetImage            = Operation{"getImage", "GET", "/api/v1/images/{id}"}
@@ -71,7 +72,7 @@ var (
 var AllOperations = []Operation{
 	opAuthConfig, opMe,
 	opListMachines, opCreateMachine, opGetMachine, opUpdateMachine, opDeleteMachine, opWakeMachine, opListWakes,
-	opListProfiles, opCreateProfile, opGetProfile, opUpdateProfile, opDeleteProfile, opUpsertTemplate, opDeleteTemplate,
+	opListProfiles, opCreateProfile, opGetProfile, opUpdateProfile, opDeleteProfile, opUpsertTemplate, opDeleteTemplate, opPreviewProfile,
 	opListImages, opCreateImage, opGetImage, opUpdateImage, opDeleteImage, opListImageVersions, opCreateImageVersion, opCreateBlob,
 	opListDriverPacks, opCreateDriverPack, opDeleteDriverVersion,
 	opSearchVendorPacks, opFetchVendorPack, opListVendorFetchJobs,

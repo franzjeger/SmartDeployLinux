@@ -1507,7 +1507,7 @@ function openProfileCreateModal(images) {
         </div>
         <div class="row">
           <label class="full">Variables (JSON, optional)
-            <textarea name="vars" rows="4" placeholder='{"hostname_template":"{{asset_tag}}","timezone":"UTC"}'>{}</textarea>
+            <textarea name="vars" rows="4" placeholder='{"timezone":"UTC","username":"ubuntu","ssh_authorized_key":"ssh-ed25519 AAAA…"}'>{}</textarea>
           </label>
         </div>
       </form>`,
@@ -1577,7 +1577,7 @@ route("/profiles/:id", async ({ id }) => {
         <div class="section-title">Variables</div>
         <div class="card">
           <p class="hint muted small">Available in templates as <code>{{ vars.&lt;key&gt; }}</code>. Plus built-ins:
-            <code>{{ asset_tag }}</code>, <code>{{ machine_id }}</code>, <code>{{ deploy_fqdn }}</code>, <code>{{ job_id }}</code>, <code>{{ one_shot_token }}</code>.</p>
+            <code>{{.Hostname}}</code>, <code>{{.Machine.AssetTag}}</code>, <code>{{.Machine.ID}}</code>, <code>{{.PublicURL}}</code>, <code>{{.JobID}}</code>, <code>{{.Token}}</code> (Go template syntax; unknown keys render empty).</p>
           <textarea id="vars-editor" rows="6" style="width:100%;">${escapeHTML(JSON.stringify(vars, null, 2))}</textarea>
           <div class="btn-row" style="margin-top: 8px;">
             <button class="btn small" id="vars-save">Save vars</button>
@@ -1598,10 +1598,12 @@ route("/profiles/:id", async ({ id }) => {
             <div class="btn-row" style="margin-top: 8px; justify-content: space-between;">
               <div>
                 <button class="btn small" id="tpl-save">Save template</button>
+                <button class="btn small secondary" id="tpl-validate">Validate &amp; preview</button>
                 ${tplByKind[activeKind] ? `<button class="btn small danger" id="tpl-delete">Delete template</button>` : ""}
               </div>
               <span id="tpl-status" class="muted small">${tplByKind[activeKind] ? `Last saved ${fmtTime(tplByKind[activeKind].updated_at)}` : "Not yet saved"}</span>
             </div>
+            <div id="tpl-preview"></div>
           </div>
         </div>
       </div>`;
@@ -1622,6 +1624,26 @@ route("/profiles/:id", async ({ id }) => {
         toast("Variables saved", "ok");
       } catch (e) {
         status.textContent = "Error: " + e.message; status.className = "err small";
+      }
+    });
+
+    $("#tpl-validate").addEventListener("click", async () => {
+      const body = $("#tpl-editor").value;
+      const box = $("#tpl-preview");
+      box.innerHTML = `<div class="muted small" style="margin-top:8px;">Rendering…</div>`;
+      try {
+        // Validates the DRAFT in the editor, not the saved copy — the
+        // whole point is catching mistakes before they are saved.
+        const p = await api("POST", `/api/v1/profiles/${id}/preview`, { kind: activeKind, body });
+        box.innerHTML = `
+          ${p.yaml_valid
+            ? `<div class="banner info" style="margin-top:8px;">✓ Renders cleanly and is well-formed YAML.</div>`
+            : `<div class="banner err" style="margin-top:8px;">✗ ${escapeHTML(p.yaml_error)}</div>`}
+          ${p.rendered ? `
+            <div class="section-title" style="margin-top:10px;">Rendered with a synthetic machine</div>
+            <pre style="max-height:280px;overflow:auto;font-size:12px;background:var(--bg-inset,rgba(0,0,0,.25));padding:12px;border-radius:6px;">${escapeHTML(p.rendered)}</pre>` : ""}`;
+      } catch (e) {
+        box.innerHTML = `<div class="banner err" style="margin-top:8px;">${escapeHTML(e.message)}</div>`;
       }
     });
 
@@ -1705,19 +1727,30 @@ function openProfileEditMetaModal(profile, images, onSaved) {
 }
 
 function defaultTemplateFor(kind) {
+  // These starters MUST be valid Go text/template — the renderer parses
+  // them with no custom functions. Context: .Hostname .PublicURL .JobID
+  // .Token .Machine.ID .Machine.AssetTag .Vars.<key> (missingkey=zero).
+  // An earlier revision used Jinja-style "{{ vars.x | default(y) }}"
+  // filters here, which the renderer rejects outright — every operator
+  // who started from a built-in template got an install that failed at
+  // user-data fetch time. Validate & preview on the profile page proves
+  // a starter renders before it is saved.
   switch (kind) {
     case "autoinstall":
       return `#cloud-config
 autoinstall:
   version: 1
   identity:
-    hostname: {{ vars.hostname_template | default(asset_tag) }}
-    username: ubuntu
+    hostname: {{.Hostname}}
+    username: {{if .Vars.username}}{{.Vars.username}}{{else}}ubuntu{{end}}
     # mkpasswd -m sha-512
     password: '$6$rounds=4096$REPLACE_ME'
   ssh:
     install-server: yes
-    authorized-keys: {{ vars.authorized_keys | default([]) | toJSON }}
+{{- if .Vars.ssh_authorized_key}}
+    authorized-keys:
+      - "{{.Vars.ssh_authorized_key}}"
+{{- end}}
   storage:
     layout:
       name: lvm
@@ -1725,48 +1758,49 @@ autoinstall:
     - openssh-server
     - python3-minimal
   late-commands:
-    - curtin in-target -- bash -c 'curl -sf {{ deploy_fqdn }}/v1/jobs/{{ job_id }}/events -X POST -H "Authorization: Bearer {{ one_shot_token }}" -H "Content-Type: application/json" --data "{\\"phase\\":\\"completed\\",\\"message\\":\\"autoinstall finished\\"}" || true'
+    - 'curtin in-target -- bash -c true || true'
+    - 'curl -sf {{.PublicURL}}/v1/jobs/{{.JobID}}/events -X POST -H "Authorization: Bearer {{.Token}}" -H "Content-Type: application/json" --data "{\\"phase\\":\\"completed\\",\\"message\\":\\"autoinstall finished\\"}" || true'
 `;
     case "kickstart":
       return `text
 lang en_US.UTF-8
 keyboard us
-timezone {{ vars.timezone | default("UTC") }}
-network --hostname={{ asset_tag }} --bootproto=dhcp
+timezone {{if .Vars.timezone}}{{.Vars.timezone}}{{else}}UTC{{end}}
+network --hostname={{.Hostname}} --bootproto=dhcp
 rootpw --iscrypted REPLACE_ME
 authselect select sssd
 %post
-curl -sf "{{ deploy_fqdn }}/v1/jobs/{{ job_id }}/events" \\
-  -H "Authorization: Bearer {{ one_shot_token }}" \\
+curl -sf "{{.PublicURL}}/v1/jobs/{{.JobID}}/events" \\
+  -H "Authorization: Bearer {{.Token}}" \\
   -H "Content-Type: application/json" \\
   --data '{"phase":"completed","message":"kickstart done"}' || true
 %end
 `;
     case "preseed":
       return `d-i debian-installer/locale string en_US.UTF-8
-d-i netcfg/get_hostname string {{ asset_tag }}
-d-i passwd/user-fullname string {{ vars.full_name | default("Operator") }}
-d-i passwd/username string {{ vars.username | default("ubuntu") }}
+d-i netcfg/get_hostname string {{.Hostname}}
+d-i passwd/user-fullname string {{if .Vars.full_name}}{{.Vars.full_name}}{{else}}Operator{{end}}
+d-i passwd/username string {{if .Vars.username}}{{.Vars.username}}{{else}}ubuntu{{end}}
 d-i passwd/user-password-crypted password REPLACE_ME
 d-i preseed/late_command string in-target curl -sf \\
-  -H "Authorization: Bearer {{ one_shot_token }}" \\
+  -H "Authorization: Bearer {{.Token}}" \\
   -H "Content-Type: application/json" \\
   --data '{"phase":"completed","message":"preseed done"}' \\
-  "{{ deploy_fqdn }}/v1/jobs/{{ job_id }}/events" || true
+  "{{.PublicURL}}/v1/jobs/{{.JobID}}/events" || true
 `;
     case "cloud-init":
       return `#cloud-config
-hostname: {{ asset_tag }}
-timezone: {{ vars.timezone | default("UTC") }}
+hostname: {{.Hostname}}
+timezone: {{if .Vars.timezone}}{{.Vars.timezone}}{{else}}UTC{{end}}
 runcmd:
-  - curl -sf "{{ deploy_fqdn }}/v1/jobs/{{ job_id }}/events" -H "Authorization: Bearer {{ one_shot_token }}" -H "Content-Type: application/json" --data '{"phase":"completed","message":"cloud-init done"}' || true
+  - curl -sf "{{.PublicURL}}/v1/jobs/{{.JobID}}/events" -H "Authorization: Bearer {{.Token}}" -H "Content-Type: application/json" --data '{"phase":"completed","message":"cloud-init done"}' || true
 `;
     case "ignition":
       return `{
   "ignition": { "version": "3.4.0" },
   "passwd": {
     "users": [
-      { "name": "core", "sshAuthorizedKeys": {{ vars.authorized_keys | default([]) | toJSON }} }
+      { "name": "core"{{if .Vars.ssh_authorized_key}}, "sshAuthorizedKeys": ["{{.Vars.ssh_authorized_key}}"]{{end}} }
     ]
   },
   "storage": {},
