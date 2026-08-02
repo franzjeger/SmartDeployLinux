@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -142,22 +143,48 @@ func notifyTerminalJobs(ctx context.Context, pool *pgxpool.Pool, webhookURL stri
 		if n.assetTag != nil && *n.assetTag != "" {
 			machine = *n.assetTag
 		}
-		payload, _ := json.Marshal(map[string]any{
-			"event":      "job.terminal",
-			"job_id":     n.jobID,
-			"machine_id": n.machineID,
-			"kind":       n.kind,
-			"state":      n.state,
-			"at":         n.finishedAt.UTC().Format(time.RFC3339),
-			"text": fmt.Sprintf("%s job %.8s for machine %s %s",
-				n.kind, n.jobID, machine, n.state),
-		})
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(payload))
-		if err != nil {
-			slog.Error("notify build request", "err", err)
-			continue
+		text := fmt.Sprintf("%s job %.8s for machine %s %s",
+			n.kind, n.jobID, machine, n.state)
+
+		// Two wire formats. "json" (default) is Slack-incoming-webhook
+		// compatible via its `text` field. "ntfy" posts the bare text —
+		// ntfy renders the request body verbatim as the notification, so
+		// JSON would show up on a phone as a raw blob — plus ntfy's
+		// header conventions: failures arrive high-priority with a
+		// warning tag so they stand out on a lock screen.
+		var req *http.Request
+		var err error
+		if os.Getenv("NOTIFY_WEBHOOK_FORMAT") == "ntfy" {
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, strings.NewReader(text))
+			if err != nil {
+				slog.Error("notify build request", "err", err)
+				continue
+			}
+			req.Header.Set("Content-Type", "text/plain")
+			req.Header.Set("X-Title", "Deployserver")
+			if n.state == "completed" {
+				req.Header.Set("X-Tags", "white_check_mark")
+			} else {
+				req.Header.Set("X-Tags", "warning")
+				req.Header.Set("X-Priority", "high")
+			}
+		} else {
+			payload, _ := json.Marshal(map[string]any{
+				"event":      "job.terminal",
+				"job_id":     n.jobID,
+				"machine_id": n.machineID,
+				"kind":       n.kind,
+				"state":      n.state,
+				"at":         n.finishedAt.UTC().Format(time.RFC3339),
+				"text":       text,
+			})
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(payload))
+			if err != nil {
+				slog.Error("notify build request", "err", err)
+				continue
+			}
+			req.Header.Set("Content-Type", "application/json")
 		}
-		req.Header.Set("Content-Type", "application/json")
 		if tok := os.Getenv("NOTIFY_WEBHOOK_TOKEN"); tok != "" {
 			req.Header.Set("Authorization", "Bearer "+tok)
 		}
