@@ -68,6 +68,54 @@ func TestLinuxTemplateUsesTokenDatasource(t *testing.T) {
 	}
 }
 
+// A chain_url must hand the whole boot to the chained script: no kernel
+// or initrd lines (they would be empty or point at /static 404s), and
+// still a valid iPXE script.
+func TestLinuxTemplateChainURL(t *testing.T) {
+	data := sampleData()
+	data.Image.ChainURL = "https://boot.netboot.xyz/menu.ipxe"
+	data.Image.KernelURL = ""
+	data.Image.InitrdURL = ""
+	var sb strings.Builder
+	tplData := struct {
+		*machineProfileResp
+		DeployFQDN string
+	}{data, "deploy.example.com"}
+	if err := linuxTpl.Execute(&sb, tplData); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	out := sb.String()
+	if !strings.Contains(out, "chain https://boot.netboot.xyz/menu.ipxe") {
+		t.Fatalf("missing chain line:\n%s", out)
+	}
+	for _, forbidden := range []string{"kernel ", "initrd "} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("chain script must not contain %q:\n%s", forbidden, out)
+		}
+	}
+	if !strings.HasPrefix(out, "#!ipxe\n") {
+		t.Fatalf("missing shebang:\n%s", out)
+	}
+}
+
+// kernel_args must be appended to the kernel line — the field was saved
+// by the UI and silently ignored here for a long time.
+func TestLinuxTemplateAppendsKernelArgs(t *testing.T) {
+	data := sampleData()
+	data.Image.KernelArgs = "console=ttyS0 quiet"
+	var sb strings.Builder
+	tplData := struct {
+		*machineProfileResp
+		DeployFQDN string
+	}{data, "deploy.example.com"}
+	if err := linuxTpl.Execute(&sb, tplData); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(sb.String(), " console=ttyS0 quiet\n") {
+		t.Fatalf("kernel_args not appended:\n%s", sb.String())
+	}
+}
+
 // The Windows path must hand WinPE both the job id and the bearer token.
 func TestWindowsTemplateInjectsToken(t *testing.T) {
 	out := render(t, "windows")

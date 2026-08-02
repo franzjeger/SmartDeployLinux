@@ -98,8 +98,10 @@ type machineProfileResp struct {
 		OSFamily   string `json:"os_family"`
 		OSVersion  string `json:"os_version"`
 		Arch       string `json:"arch"`
+		ChainURL   string `json:"chain_url,omitempty"`
 		KernelURL  string `json:"kernel_url,omitempty"`
 		InitrdURL  string `json:"initrd_url,omitempty"`
+		KernelArgs string `json:"kernel_args,omitempty"`
 		WimbootURL string `json:"wimboot_url,omitempty"`
 		BootWimURL string `json:"bootwim_url,omitempty"`
 		WimURL     string `json:"wim_url,omitempty"`
@@ -190,11 +192,21 @@ func (h *handlers) renderIPXEByMAC(w http.ResponseWriter, r *http.Request) {
 // nginx's /boot/<token>/user-data route and the API's token-gated
 // render endpoints. The machine UUID is intentionally never used in
 // boot URLs (SECURITY.md §4 #1).
+// Two Linux shapes. chain_url (netboot.xyz-style menus, live ISOs,
+// rolling distros without split kernel+initrd artifacts) hands the whole
+// boot over to the chained script. kernel+initrd is the classic
+// autoinstall path; media.kernel_args is appended last so an operator
+// can extend the cmdline — previously that field was saved by the UI and
+// then silently ignored here.
 var linuxTpl = template.Must(template.New("linux").Parse(`#!ipxe
 echo Deploying {{.Profile.Name}} to {{.Machine.AssetTag}} ({{.Machine.ID}})
-kernel {{.Image.KernelURL}} initrd=initrd autoinstall ip=dhcp "ds=nocloud-net;s=https://{{.DeployFQDN}}/boot/{{.OneShotToken}}/"
+{{if .Image.ChainURL -}}
+chain {{.Image.ChainURL}}
+{{- else -}}
+kernel {{.Image.KernelURL}} initrd=initrd autoinstall ip=dhcp "ds=nocloud-net;s=https://{{.DeployFQDN}}/boot/{{.OneShotToken}}/"{{if .Image.KernelArgs}} {{.Image.KernelArgs}}{{end}}
 initrd {{.Image.InitrdURL}}
 boot
+{{- end}}
 `))
 
 var windowsTpl = template.Must(template.New("windows").Parse(`#!ipxe

@@ -1733,8 +1733,12 @@ route("/images", async () => {
           <tbody>
           ${imgs.map(i => {
             const m = i.media || {};
+            // A chain URL alone is a complete, bootable configuration —
+            // the badge used to ignore it and report a working
+            // catalog-installed image as "not configured".
+            const chainOnly = i.os_family === "linux" && m.chain_url;
             const urls = i.os_family === "linux"
-              ? [["kernel", m.kernel_url], ["initrd", m.initrd_url]]
+              ? (chainOnly ? [["chain", m.chain_url]] : [["kernel", m.kernel_url], ["initrd", m.initrd_url]])
               : [["wimboot", m.wimboot_url], ["boot.wim", m.bootwim_url], ["install.wim", m.wim_url]];
             const populated = urls.filter(([_, u]) => u).length;
             return `
@@ -1917,9 +1921,10 @@ route("/images/:id", async ({ id }) => {
 
   const fields = isLinux
     ? [
+        { key: "chain_url",   label: "Chain URL (easiest)", hint: "Boots another iPXE script — netboot.xyz menus, live ISOs. e.g. https://boot.netboot.xyz/ubuntu.ipxe" },
         { key: "kernel_url",  label: "Kernel URL",  hint: "iPXE 'kernel' line. e.g. https://releases.ubuntu.com/24.04/.../linux" },
         { key: "initrd_url",  label: "Initrd URL",  hint: "iPXE 'initrd' line. e.g. .../initrd" },
-        { key: "kernel_args", label: "Kernel args (optional)", hint: "Appended to cmdline. e.g. 'autoinstall ds=nocloud-net'" },
+        { key: "kernel_args", label: "Kernel args (optional)", hint: "Appended to cmdline. e.g. 'console=ttyS0'" },
       ]
     : [
         { key: "wimboot_url", label: "wimboot URL",        hint: "Pinned iPXE wimboot binary." },
@@ -1944,7 +1949,9 @@ route("/images/:id", async ({ id }) => {
 
       <div class="section-title">Media URLs</div>
       <div class="card">
-        <p class="hint muted small">These URLs are baked into the iPXE chain script at deploy time. Tailnet-internal URLs work; pointing at the public internet is also fine because the bootstrap stick is already on the tailnet by design.</p>
+        <p class="hint muted small">These URLs are baked into the iPXE chain script at deploy time. Tailnet-internal URLs work; pointing at the public internet is also fine because the bootstrap stick is already on the tailnet by design.
+        ${isLinux ? `Don't know the URLs? Use <strong>Fill from catalog</strong> — it has known-good boot URLs for common distros. A Chain URL alone is enough.` : ""}</p>
+        ${isLinux ? `<div class="btn-row" style="margin-bottom:10px;"><button class="btn small secondary" type="button" id="fill-from-catalog">⊞ Fill from catalog…</button></div>` : ""}
         <form id="media-form">
           ${fields.map(f => `
             <div class="row">
@@ -2036,15 +2043,56 @@ route("/images/:id", async ({ id }) => {
   $("#media-form").addEventListener("submit", async e => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const media = {};
-    for (const [k, v] of fd) if (v) media[k] = v;
+    // Merge over the stored media instead of replacing it. The form only
+    // renders a subset of possible keys, so building the object from form
+    // fields alone silently destroyed everything else — saving this form
+    // on a catalog-installed image used to wipe its chain_url and leave
+    // the image unbootable.
+    const media = { ...(img.media || {}) };
+    for (const [k, v] of fd) { if (v) media[k] = v; else delete media[k]; }
     const status = $("#media-status");
     status.textContent = "Saving…";
     try {
       await api("PATCH", `/api/v1/images/${id}`, { media });
+      img.media = media; // keep the merge base current for repeat saves
       status.textContent = "Saved";
       toast("Media URLs saved", "ok");
     } catch (err) { status.textContent = "Error: " + err.message; toast(err.message, "err"); }
+  });
+
+  $("#fill-from-catalog")?.addEventListener("click", async () => {
+    let catalog;
+    try { catalog = await api("GET", "/api/v1/catalog"); }
+    catch (e) { toast("Failed to load catalog: " + e.message, "err"); return; }
+    const entries = catalog.categories
+      .flatMap(c => c.entries)
+      .filter(e => e.os_family === img.os_family && e.media && Object.keys(e.media).length);
+    if (!entries.length) { toast("No catalog entries with media for this OS family.", "warn"); return; }
+    const modal = openModal({
+      title: "Fill media URLs from catalog",
+      body: `
+        <p class="small muted">Pick a distro — its known-good boot URLs are copied into the form.
+        Nothing is saved until you press Save URLs.</p>
+        <div class="table-wrap" style="max-height:320px;overflow-y:auto;"><table>
+          <tbody>
+          ${entries.map((e, i) => `
+            <tr class="catalog-pick" data-idx="${i}" style="cursor:pointer;">
+              <td><strong>${escapeHTML(e.name)}</strong><br>
+                <span class="muted small">${escapeHTML(e.os_version)} · ${escapeHTML(Object.keys(e.media).join(", "))}</span></td>
+            </tr>`).join("")}
+          </tbody>
+        </table></div>`,
+    });
+    $$(".catalog-pick").forEach(tr => tr.addEventListener("click", () => {
+      const e = entries[Number(tr.dataset.idx)];
+      const form = $("#media-form");
+      for (const key of ["chain_url", "kernel_url", "initrd_url", "kernel_args"]) {
+        const input = form.querySelector(`[name="${key}"]`);
+        if (input) input.value = e.media[key] || "";
+      }
+      modal.close();
+      toast(`Filled from ${e.name} — review and Save URLs`, "ok");
+    }));
   });
 
   $("#edit-meta").addEventListener("click", () => {

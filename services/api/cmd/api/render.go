@@ -57,8 +57,10 @@ type renderResp struct {
 		OSFamily   string `json:"os_family"`
 		OSVersion  string `json:"os_version"`
 		Arch       string `json:"arch"`
+		ChainURL   string `json:"chain_url,omitempty"`
 		KernelURL  string `json:"kernel_url,omitempty"`
 		InitrdURL  string `json:"initrd_url,omitempty"`
+		KernelArgs string `json:"kernel_args,omitempty"`
 		WimbootURL string `json:"wimboot_url,omitempty"`
 		BootWimURL string `json:"bootwim_url,omitempty"`
 		WimURL     string `json:"wim_url,omitempty"`
@@ -129,6 +131,7 @@ func (h *handlers) bundleToResp(b *store.RenderBundle) renderResp {
 	// /static convention so the http-boot service can serve from a
 	// local mirror if configured.
 	var media struct {
+		ChainURL    string `json:"chain_url"`
 		KernelURL   string `json:"kernel_url"`
 		InitrdURL   string `json:"initrd_url"`
 		WimbootURL  string `json:"wimboot_url"`
@@ -143,6 +146,18 @@ func (h *handlers) bundleToResp(b *store.RenderBundle) renderResp {
 	staticBase := fmt.Sprintf("https://%s/static", h.deployFQDN)
 	switch b.ImageOSFamily {
 	case "linux":
+		// chain_url is how most catalog entries boot (netboot.xyz and
+		// friends), and how a live/rolling distro without split
+		// kernel+initrd artifacts boots at all. When it is set and no
+		// explicit kernel URL overrides it, chain instead of falling
+		// back to /static paths that typically do not exist — that
+		// fallback produced an iPXE 404 at the target with no earlier
+		// warning anywhere.
+		r.Image.ChainURL = media.ChainURL
+		r.Image.KernelArgs = media.KernelArgs
+		if media.ChainURL != "" && media.KernelURL == "" {
+			break
+		}
 		r.Image.KernelURL = nonEmpty(media.KernelURL,
 			fmt.Sprintf("%s/%s-%s/vmlinuz", staticBase, b.ImageOSFamily, b.ImageOSVersion))
 		r.Image.InitrdURL = nonEmpty(media.InitrdURL,
@@ -169,7 +184,7 @@ func (h *handlers) bundleToRespForSite(ctx context.Context, b *store.RenderBundl
 		return r
 	}
 	for _, p := range []*string{
-		&r.Image.KernelURL, &r.Image.InitrdURL,
+		&r.Image.ChainURL, &r.Image.KernelURL, &r.Image.InitrdURL,
 		&r.Image.WimbootURL, &r.Image.BootWimURL, &r.Image.WimURL,
 	} {
 		*p = mirrorRewrite(mirror, h.deployFQDN, *p)

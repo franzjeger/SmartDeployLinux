@@ -54,7 +54,10 @@ services:
       retries: 20
 
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-09-07T16-13-09Z
+    # NB: mc has its OWN release train — the server's RELEASE date is not
+    # a valid mc tag. Pinning them identically made `docker compose up`
+    # fail on the stock small tier with "manifest not found".
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
     networks: [deploy]
     depends_on:
       minio:
