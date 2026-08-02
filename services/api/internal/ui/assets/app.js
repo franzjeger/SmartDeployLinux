@@ -2225,15 +2225,29 @@ route("/images/:id", async ({ id }) => {
 
 route("/drivers", async () => {
   setBreadcrumb([{label:"Driver packs"}]);
-  const packs = await api("GET", "/api/v1/driver-packs").catch(() => []);
+  const [packs, fetchJobs] = await Promise.all([
+    api("GET", "/api/v1/driver-packs").catch(() => []),
+    api("GET", "/api/v1/vendor-driverpacks/jobs?limit=10").catch(() => []),
+  ]);
 
   $("#content").innerHTML = `
     <div class="page">
       <div class="page-title">
         <div><h1>Driver packs</h1>
         <p class="subtitle">Hardware-matched driver bundles injected during Windows deployment (DISM /Add-Driver).</p></div>
-        <div class="page-actions"><button class="btn" id="add-pack">+ Add driver pack</button></div>
+        <div class="page-actions">
+          <button class="btn secondary" id="vendor-fetch-btn">⊞ From vendor catalog…</button>
+          <button class="btn" id="add-pack">+ Add driver pack</button>
+        </div>
       </div>
+      ${fetchJobs.length ? `
+        <div class="section-title">Vendor fetch jobs</div>
+        <div class="table-wrap" style="margin-bottom:16px;"><table>
+          <thead><tr><th>Status</th><th>Model</th><th>OS</th><th>Size</th><th>Detail</th><th>Queued</th></tr></thead>
+          <tbody id="vendor-jobs-body">
+          ${fetchJobs.map(vendorJobRow).join("")}
+          </tbody>
+        </table></div>` : ""}
       ${packs.length ? `
         <div class="table-wrap"><table>
           <thead><tr>
@@ -2275,6 +2289,80 @@ route("/drivers", async () => {
       navigate();
     } catch (e) { toast(e.message, "err"); }
   }));
+
+  $("#vendor-fetch-btn").addEventListener("click", openVendorPackBrowser);
+
+  // Poll running jobs so the operator watches a 1–2 GiB download move
+  // through queued→running→completed without hammering refresh.
+  const poll = setInterval(async () => {
+    const body = $("#vendor-jobs-body");
+    if (!body) return;
+    const jobs = await api("GET", "/api/v1/vendor-driverpacks/jobs?limit=10").catch(() => null);
+    if (jobs) body.innerHTML = jobs.map(vendorJobRow).join("");
+  }, 5000);
+
+function vendorJobRow(j) {
+  const badge = { queued: "info", running: "info", completed: "ok", failed: "err" }[j.state] || "";
+  const size = j.size_bytes ? (j.size_bytes / 1048576).toFixed(0) + " MiB" : "—";
+  return `
+    <tr class="no-hover">
+      <td><span class="badge ${badge}"><span class="dot"></span>${escapeHTML(j.state)}</span></td>
+      <td><strong>${escapeHTML(j.model)}</strong></td>
+      <td class="small">${escapeHTML(j.os_family)} ${escapeHTML(j.os_version)}</td>
+      <td class="mono small">${size}</td>
+      <td class="small muted">${j.error ? escapeHTML(j.error) : (j.state === "completed" ? "pack registered with match rules" : "")}</td>
+      <td class="mono small muted">${fmtTime(j.created_at)}</td>
+    </tr>`;
+}
+
+async function openVendorPackBrowser() {
+  const modal = openModal({
+    title: "Fetch driver pack from vendor catalog",
+    body: `
+      <p class="small muted">Search Lenovo's published enterprise driver packs by model name or
+      machine type (e.g. <code>X1 Carbon</code> or <code>20XW</code>). The server downloads the
+      pack, verifies its checksum, and registers it with the right match rules — nothing to
+      upload. Dell and HP are tracked in
+      <a href="https://github.com/franzjeger/SmartDeployLinux/issues/18" target="_blank">issue #18</a>.</p>
+      <div class="search"><input id="vendor-q" placeholder="Model name or machine type…" autocomplete="off"></div>
+      <div id="vendor-results" style="max-height:320px;overflow-y:auto;margin-top:10px;">
+        <div class="muted small">Type at least two characters.</div>
+      </div>`,
+  });
+  const results = $("#vendor-results");
+  let t = null;
+  $("#vendor-q").addEventListener("input", e => {
+    clearTimeout(t);
+    const q = e.target.value.trim();
+    if (q.length < 2) { results.innerHTML = `<div class="muted small">Type at least two characters.</div>`; return; }
+    t = setTimeout(async () => {
+      results.innerHTML = `<div class="muted small">Searching…</div>`;
+      let entries;
+      try { entries = await api("GET", "/api/v1/vendor-driverpacks?q=" + encodeURIComponent(q)); }
+      catch (err) { results.innerHTML = `<div class="banner err">${escapeHTML(err.message)}</div>`; return; }
+      if (!entries.length) { results.innerHTML = `<div class="muted small">No matches.</div>`; return; }
+      results.innerHTML = `
+        <div class="table-wrap"><table><tbody>
+          ${entries.map((en, i) => `
+            <tr class="no-hover">
+              <td><strong>${escapeHTML(en.model)}</strong><br>
+                <span class="muted small">Windows ${escapeHTML(en.os_version)} · ${escapeHTML(en.date)} · types ${escapeHTML((en.types || []).join(", "))}</span></td>
+              <td class="actions"><button class="btn small vendor-fetch-one" data-idx="${i}">Fetch</button></td>
+            </tr>`).join("")}
+        </tbody></table></div>`;
+      $$(".vendor-fetch-one").forEach(btn => btn.addEventListener("click", async () => {
+        const en = entries[Number(btn.dataset.idx)];
+        btn.disabled = true; btn.textContent = "Queuing…";
+        try {
+          await api("POST", "/api/v1/vendor-driverpacks/fetch", { url: en.URL || en.url });
+          modal.close();
+          toast(`Fetching ${en.model} (Windows ${en.os_version}) — watch progress under Vendor fetch jobs`, "ok");
+          navigate();
+        } catch (err) { btn.disabled = false; btn.textContent = "Fetch"; toast(err.message, "err"); }
+      }));
+    }, 300);
+  });
+}
 
   $("#add-pack").addEventListener("click", () => {
     openModal({
@@ -2344,6 +2432,10 @@ route("/drivers", async () => {
       },
     });
   });
+
+  // Returned to the router as this view's cleanup: stop polling vendor
+  // fetch jobs when the operator navigates away.
+  return () => clearInterval(poll);
 });
 
 // ---------- views: Sites ----------

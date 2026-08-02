@@ -156,6 +156,34 @@ func (c *Client) DeleteDriverPackVersion(ctx context.Context, versionID string) 
 	return c.do(ctx, opDeleteDriverVersion, map[string]string{"id": versionID}, nil, nil, nil)
 }
 
+// --- vendor driver-pack catalogs --------------------------------------
+
+// SearchVendorDriverPacks searches the vendor driver-pack catalogs by
+// model name or machine type.
+func (c *Client) SearchVendorDriverPacks(ctx context.Context, query string) ([]VendorPackEntry, error) {
+	q := url.Values{}
+	q.Set("q", query)
+	var out []VendorPackEntry
+	return out, c.do(ctx, opSearchVendorPacks, nil, q, nil, &out)
+}
+
+// FetchVendorDriverPack queues a server-side download+ingest of a pack.
+// The URL must come from a SearchVendorDriverPacks result.
+func (c *Client) FetchVendorDriverPack(ctx context.Context, url string) (map[string]string, error) {
+	var out map[string]string
+	return out, c.do(ctx, opFetchVendorPack, nil, nil, map[string]string{"url": url}, &out)
+}
+
+// ListVendorFetchJobs returns recent vendor fetch jobs, newest first.
+func (c *Client) ListVendorFetchJobs(ctx context.Context, limit int) ([]VendorFetchJob, error) {
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	var out []VendorFetchJob
+	return out, c.do(ctx, opListVendorFetchJobs, nil, q, nil, &out)
+}
+
 // --- catalog ----------------------------------------------------------
 
 // ListCatalog returns the distro net-install catalog as a raw map.

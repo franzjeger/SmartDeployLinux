@@ -51,6 +51,9 @@ export const OPERATIONS = {
   listDriverPacks: op("listDriverPacks", "GET", "/api/v1/driver-packs"),
   createDriverPack: op("createDriverPack", "POST", "/api/v1/driver-packs"),
   deleteDriverPackVersion: op("deleteDriverPackVersion", "DELETE", "/api/v1/driver-packs/versions/{id}"),
+  searchVendorDriverPacks: op("searchVendorDriverPacks", "GET", "/api/v1/vendor-driverpacks"),
+  fetchVendorDriverPack: op("fetchVendorDriverPack", "POST", "/api/v1/vendor-driverpacks/fetch"),
+  listVendorFetchJobs: op("listVendorFetchJobs", "GET", "/api/v1/vendor-driverpacks/jobs"),
 
   listCatalog: op("listCatalog", "GET", "/api/v1/catalog"),
   installFromCatalog: op("installFromCatalog", "POST", "/api/v1/catalog/install"),

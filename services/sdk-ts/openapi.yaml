@@ -364,6 +364,45 @@ paths:
       description: "Requires `image.write`."
       responses: { "204": { description: Deleted }, "404": { $ref: "#/components/responses/NotFound" } }
 
+  /api/v1/vendor-driverpacks:
+    get:
+      tags: [driver-packs]
+      summary: Search the vendor driver-pack catalogs
+      description: "Requires `driverpack.read`. Searches Lenovo's published enterprise driver-pack catalog by model name or machine type. Empty query returns nothing."
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: "Model name or machine type, e.g. 'X1 Carbon' or '20XW'" }
+      responses:
+        "200": { description: Matching catalog entries }
+        "502": { description: Vendor catalog unreachable and no cached copy }
+
+  /api/v1/vendor-driverpacks/fetch:
+    post:
+      tags: [driver-packs]
+      summary: Queue a vendor driver-pack download
+      description: "Requires `driverpack.write`. The URL must be one returned by the search endpoint — the server only downloads addresses read from the vendor's own catalog. The pack is streamed into the blob store, sha256-verified against the catalog, and registered with dmi-product-prefix match rules for its machine types."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+      responses:
+        "202": { description: Fetch job queued }
+        "400": { description: URL not present in the vendor catalog }
+        "503": { description: Blob store not configured }
+
+  /api/v1/vendor-driverpacks/jobs:
+    get:
+      tags: [driver-packs]
+      summary: List vendor fetch jobs
+      description: "Requires `driverpack.read`. Most recent first."
+      parameters:
+        - { name: limit, in: query, schema: { type: integer } }
+      responses: { "200": { description: Fetch jobs with state and error detail } }
+
   /api/v1/catalog:
     get:
       tags: [catalog]

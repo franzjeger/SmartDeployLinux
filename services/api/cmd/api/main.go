@@ -180,6 +180,9 @@ func serve() {
 		auth.SetUserResolver(auth.ResolverFromPool(st.Pool()))
 	}
 
+	// Drain vendor driver-pack fetch jobs in the background (#18).
+	startVendorFetchRunner(ctx, st)
+
 	// Postgres-backed event bus: SSE pushes fan out across api replicas
 	// (HA gap closed — see pgbus doc comment).
 	bus := pgbus.New(st.Pool())
@@ -430,6 +433,9 @@ func (h *handlers) registerOperatorRoutes(r chi.Router) {
 	r.Patch("/images/{id}", h.updateImage)
 	r.Delete("/images/{id}", h.deleteImage)
 	r.Post("/blobs", h.createBlob)
+	r.Get("/vendor-driverpacks", h.searchVendorPacks)
+	r.Post("/vendor-driverpacks/fetch", h.fetchVendorPack)
+	r.Get("/vendor-driverpacks/jobs", h.listVendorFetchJobs)
 	r.Get("/driver-packs", h.listDriverPacks)
 	r.Post("/driver-packs", h.createDriverPack)
 	r.Delete("/driver-packs/versions/{id}", h.deleteDriverPackVersion)

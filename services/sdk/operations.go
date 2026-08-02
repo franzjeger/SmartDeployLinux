@@ -38,6 +38,9 @@ var (
 	opListDriverPacks     = Operation{"listDriverPacks", "GET", "/api/v1/driver-packs"}
 	opCreateDriverPack    = Operation{"createDriverPack", "POST", "/api/v1/driver-packs"}
 	opDeleteDriverVersion = Operation{"deleteDriverPackVersion", "DELETE", "/api/v1/driver-packs/versions/{id}"}
+	opSearchVendorPacks   = Operation{"searchVendorDriverPacks", "GET", "/api/v1/vendor-driverpacks"}
+	opFetchVendorPack     = Operation{"fetchVendorDriverPack", "POST", "/api/v1/vendor-driverpacks/fetch"}
+	opListVendorFetchJobs = Operation{"listVendorFetchJobs", "GET", "/api/v1/vendor-driverpacks/jobs"}
 	opListCatalog         = Operation{"listCatalog", "GET", "/api/v1/catalog"}
 	opInstallCatalog      = Operation{"installFromCatalog", "POST", "/api/v1/catalog/install"}
 	opListJobs            = Operation{"listJobs", "GET", "/api/v1/jobs"}
@@ -71,6 +74,7 @@ var AllOperations = []Operation{
 	opListProfiles, opCreateProfile, opGetProfile, opUpdateProfile, opDeleteProfile, opUpsertTemplate, opDeleteTemplate,
 	opListImages, opCreateImage, opGetImage, opUpdateImage, opDeleteImage, opListImageVersions, opCreateImageVersion, opCreateBlob,
 	opListDriverPacks, opCreateDriverPack, opDeleteDriverVersion,
+	opSearchVendorPacks, opFetchVendorPack, opListVendorFetchJobs,
 	opListCatalog, opInstallCatalog,
 	opListJobs, opGetJob, opCancelJob,
 	opQueryAudit,
