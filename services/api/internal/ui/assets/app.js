@@ -1758,7 +1758,8 @@ autoinstall:
     - openssh-server
     - python3-minimal
   late-commands:
-    - curtin in-target -- bash -c 'curl -sf {{.PublicURL}}/v1/jobs/{{.JobID}}/events -X POST -H "Authorization: Bearer {{.Token}}" -H "Content-Type: application/json" --data "{\\"phase\\":\\"completed\\",\\"message\\":\\"autoinstall finished\\"}" || true'
+    - 'curtin in-target -- bash -c true || true'
+    - 'curl -sf {{.PublicURL}}/v1/jobs/{{.JobID}}/events -X POST -H "Authorization: Bearer {{.Token}}" -H "Content-Type: application/json" --data "{\\"phase\\":\\"completed\\",\\"message\\":\\"autoinstall finished\\"}" || true'
 `;
     case "kickstart":
       return `text
