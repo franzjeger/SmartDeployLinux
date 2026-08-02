@@ -319,3 +319,33 @@ type AuditEvent struct {
 	Data        json.RawMessage `json:"data"`
 	At          time.Time       `json:"at"`
 }
+
+// VendorPackEntry is one downloadable pack from a vendor catalog.
+type VendorPackEntry struct {
+	Vendor    string   `json:"vendor"`
+	Model     string   `json:"model"`
+	Types     []string `json:"types"`
+	OSFamily  string   `json:"os_family"`
+	OSVersion string   `json:"os_version"`
+	URL       string   `json:"url"`
+	SHA256    string   `json:"sha256"`
+	Date      string   `json:"date"`
+}
+
+// VendorFetchJob is a queued/running/finished vendor pack download.
+type VendorFetchJob struct {
+	ID            string   `json:"id"`
+	Vendor        string   `json:"vendor"`
+	Model         string   `json:"model"`
+	MTypes        []string `json:"mtypes"`
+	OSFamily      string   `json:"os_family"`
+	OSVersion     string   `json:"os_version"`
+	URL           string   `json:"url"`
+	State         string   `json:"state"`
+	Error         *string  `json:"error"`
+	PackVersionID *string  `json:"pack_version_id"`
+	SizeBytes     *int64   `json:"size_bytes"`
+	CreatedAt     string   `json:"created_at"`
+	StartedAt     *string  `json:"started_at"`
+	FinishedAt    *string  `json:"finished_at"`
+}

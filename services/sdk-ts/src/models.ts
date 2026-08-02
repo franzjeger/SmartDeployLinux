@@ -317,3 +317,33 @@ export interface AuditEvent {
   data: unknown;
   at: string;
 }
+
+/** One downloadable pack from a vendor catalog. */
+export interface VendorPackEntry {
+  vendor: string;
+  model: string;
+  types: string[];
+  os_family: string;
+  os_version: string;
+  url: string;
+  sha256: string;
+  date: string;
+}
+
+/** A queued/running/finished vendor pack download. */
+export interface VendorFetchJob {
+  id: string;
+  vendor: string;
+  model: string;
+  mtypes: string[];
+  os_family: string;
+  os_version: string;
+  url: string;
+  state: "queued" | "running" | "completed" | "failed";
+  error: string | null;
+  pack_version_id: string | null;
+  size_bytes: number | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}

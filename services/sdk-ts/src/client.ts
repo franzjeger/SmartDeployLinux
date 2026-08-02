@@ -34,6 +34,8 @@ import type {
   WakeInput,
   WakeRequest,
   WakeResult,
+  VendorPackEntry,
+  VendorFetchJob,
 } from "./models.js";
 
 /** Options configures a {@link DeployClient}. */
@@ -298,6 +300,25 @@ export class DeployClient {
 
   deleteDriverPackVersion(versionId: string): Promise<void> {
     return this.#void(OPERATIONS.deleteDriverPackVersion, { params: { id: versionId } });
+  }
+
+  // --- vendor driver-pack catalogs ------------------------------------
+
+  /** Search the vendor driver-pack catalogs by model name or machine type. */
+  searchVendorDriverPacks(query: string): Promise<VendorPackEntry[]> {
+    return this.#json(OPERATIONS.searchVendorDriverPacks, { query: { q: query } });
+  }
+
+  /** Queue a server-side download+ingest. `url` must come from a search result. */
+  fetchVendorDriverPack(url: string): Promise<Record<string, string>> {
+    return this.#json(OPERATIONS.fetchVendorDriverPack, { body: { url } });
+  }
+
+  /** Recent vendor fetch jobs, newest first. */
+  listVendorFetchJobs(limit?: number): Promise<VendorFetchJob[]> {
+    return this.#json(OPERATIONS.listVendorFetchJobs, {
+      query: limit ? { limit: String(limit) } : undefined,
+    });
   }
 
   // --- catalog --------------------------------------------------------

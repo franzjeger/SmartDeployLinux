@@ -183,3 +183,48 @@ func TestSelect_NormalizesDMIWhitespaceAndCase(t *testing.T) {
 		t.Fatal("DMI matching should be case- and whitespace-insensitive")
 	}
 }
+
+func TestSelect_DMIProductPrefixMatchesLenovoMTM(t *testing.T) {
+	// Lenovo: catalog gives 4-char machine types; DMI product_name is
+	// the full MTM with a per-config suffix.
+	pack := mkPV("Lenovo", "ThinkPad X1 Carbon Gen 9", "windows", "11",
+		Rule{Type: "dmi-product-prefix", Value: "20XW"},
+		Rule{Type: "dmi-product-prefix", Value: "20XX"})
+	other := mkPV("Lenovo", "ThinkPad T14", "windows", "11",
+		Rule{Type: "dmi-product-prefix", Value: "20UD"})
+
+	fp := Fingerprint{
+		DMIVendor:  "LENOVO",
+		DMIProduct: "20XW0026US",
+		OSFamily:   "windows",
+		OSVersion:  "11 24H2",
+	}
+	got := Select(fp, []PackVersion{other, pack})
+	if len(got) != 1 || got[0].ID != pack.ID {
+		t.Fatalf("expected only the X1 Carbon pack, got %+v", got)
+	}
+}
+
+func TestSelect_DMIProductPrefixTiesWithExactProductTier(t *testing.T) {
+	prefix := mkPV("Lenovo", "X1", "windows", "11",
+		Rule{Type: "dmi-product-prefix", Value: "20XW"})
+	vendorOnly := mkPV("Lenovo", "Generic", "windows", "11",
+		Rule{Type: "dmi-vendor", Value: "LENOVO"})
+	fp := Fingerprint{
+		DMIVendor: "LENOVO", DMIProduct: "20XW0026US",
+		OSFamily: "windows", OSVersion: "11",
+	}
+	got := Select(fp, []PackVersion{vendorOnly, prefix})
+	if len(got) != 2 || got[0].ID != prefix.ID {
+		t.Fatalf("prefix match must outrank vendor-only: %+v", got)
+	}
+}
+
+func TestSelect_DMIProductPrefixEmptyValueNeverMatches(t *testing.T) {
+	pack := mkPV("Lenovo", "X1", "windows", "11",
+		Rule{Type: "dmi-product-prefix", Value: ""})
+	fp := Fingerprint{DMIProduct: "20XW0026US", OSFamily: "windows", OSVersion: "11"}
+	if got := Select(fp, []PackVersion{pack}); len(got) != 0 {
+		t.Fatalf("empty prefix must not match everything: %+v", got)
+	}
+}

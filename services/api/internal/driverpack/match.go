@@ -58,7 +58,7 @@ type PackVersion struct {
 }
 
 type Rule struct {
-	Type  string // "pci-vid-did" | "dmi-product" | "dmi-baseboard" | "dmi-vendor" | "os-version"
+	Type  string // "pci-vid-did" | "dmi-product" | "dmi-product-prefix" | "dmi-baseboard" | "dmi-vendor" | "os-version"
 	Value string
 }
 
@@ -143,6 +143,15 @@ func evalRule(r Rule, pciSet map[string]struct{}, dmiVendor, dmiProduct, dmiBoar
 		}
 	case "dmi-product":
 		if dmiProduct != "" && normalize(r.Value) == dmiProduct {
+			return tierDMIProduct
+		}
+	case "dmi-product-prefix":
+		// Lenovo encodes the model as a 4-char machine type that
+		// prefixes the full DMI product_name ("20XW" → "20XW0026US"),
+		// with the suffix varying per configuration. An exact-match
+		// rule can never hit those, so vendor-catalog packs use this
+		// prefix form. Same tier as an exact product match.
+		if dmiProduct != "" && r.Value != "" && strings.HasPrefix(dmiProduct, normalize(r.Value)) {
 			return tierDMIProduct
 		}
 	case "dmi-baseboard":

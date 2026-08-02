@@ -2305,6 +2305,116 @@ func (s *Store) MintMenuBootToken(ctx context.Context, machineID, profileID uuid
 
 // --- errors ----------------------------------------------------------
 
+// --- vendor driver-pack fetch jobs (0011) -----------------------------
+
+type VendorFetchJob struct {
+	ID            uuid.UUID  `json:"id"`
+	Vendor        string     `json:"vendor"`
+	Model         string     `json:"model"`
+	MTypes        []string   `json:"mtypes"`
+	OSFamily      string     `json:"os_family"`
+	OSVersion     string     `json:"os_version"`
+	URL           string     `json:"url"`
+	ExpectedSHA   string     `json:"expected_sha256"`
+	State         string     `json:"state"`
+	Error         *string    `json:"error"`
+	PackVersionID *uuid.UUID `json:"pack_version_id"`
+	SizeBytes     *int64     `json:"size_bytes"`
+	CreatedAt     time.Time  `json:"created_at"`
+	StartedAt     *time.Time `json:"started_at"`
+	FinishedAt    *time.Time `json:"finished_at"`
+}
+
+func (s *Store) CreateVendorFetchJob(ctx context.Context, j VendorFetchJob, requestedBy uuid.UUID) (uuid.UUID, error) {
+	var id uuid.UUID
+	var by *uuid.UUID
+	if requestedBy != uuid.Nil {
+		by = &requestedBy
+	}
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO vendor_fetch_jobs
+			(vendor, model, mtypes, os_family, os_version, url, expected_sha256, requested_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		RETURNING id`,
+		j.Vendor, j.Model, j.MTypes, j.OSFamily, j.OSVersion, j.URL, j.ExpectedSHA, by).Scan(&id)
+	return id, err
+}
+
+// ClaimVendorFetchJob picks the oldest runnable job and marks it
+// running. Jobs whose runner stopped heartbeating for 10 minutes are
+// reclaimable — an api restart mid-download must not strand the row in
+// 'running' forever.
+func (s *Store) ClaimVendorFetchJob(ctx context.Context) (*VendorFetchJob, error) {
+	j := &VendorFetchJob{}
+	err := s.pool.QueryRow(ctx, `
+		UPDATE vendor_fetch_jobs SET
+			state = 'running', started_at = now(), heartbeat_at = now(), error = NULL
+		WHERE id = (
+			SELECT id FROM vendor_fetch_jobs
+			WHERE state = 'queued'
+			   OR (state = 'running' AND heartbeat_at < now() - interval '10 minutes')
+			ORDER BY created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT 1
+		)
+		RETURNING id, vendor, model, mtypes, os_family, os_version, url, expected_sha256`).
+		Scan(&j.ID, &j.Vendor, &j.Model, &j.MTypes, &j.OSFamily, &j.OSVersion, &j.URL, &j.ExpectedSHA)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return j, nil
+}
+
+func (s *Store) HeartbeatVendorFetchJob(ctx context.Context, id uuid.UUID) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE vendor_fetch_jobs SET heartbeat_at = now() WHERE id = $1`, id)
+	return err
+}
+
+func (s *Store) CompleteVendorFetchJob(ctx context.Context, id, packVersionID uuid.UUID, sizeBytes int64) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE vendor_fetch_jobs
+		SET state = 'completed', pack_version_id = $2, size_bytes = $3, finished_at = now()
+		WHERE id = $1`, id, packVersionID, sizeBytes)
+	return err
+}
+
+func (s *Store) FailVendorFetchJob(ctx context.Context, id uuid.UUID, reason string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE vendor_fetch_jobs
+		SET state = 'failed', error = $2, finished_at = now()
+		WHERE id = $1`, id, reason)
+	return err
+}
+
+func (s *Store) ListVendorFetchJobs(ctx context.Context, limit int) ([]VendorFetchJob, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, vendor, model, mtypes, os_family, os_version, url, expected_sha256,
+		       state, error, pack_version_id, size_bytes, created_at, started_at, finished_at
+		FROM vendor_fetch_jobs ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []VendorFetchJob{}
+	for rows.Next() {
+		var j VendorFetchJob
+		if err := rows.Scan(&j.ID, &j.Vendor, &j.Model, &j.MTypes, &j.OSFamily, &j.OSVersion,
+			&j.URL, &j.ExpectedSHA, &j.State, &j.Error, &j.PackVersionID, &j.SizeBytes,
+			&j.CreatedAt, &j.StartedAt, &j.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 var (
 	ErrNotFound        = errors.New("not found")
 	ErrNoActiveProfile = errors.New("no active profile and no default profile")
