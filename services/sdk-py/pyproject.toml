@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deployserver-sdk"
+version = "1.0.0"
+description = "Typed Python client for the deployserver operator API."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+keywords = ["deployserver", "sdk", "openapi", "provisioning"]
+# Runtime dependencies: NONE. HTTP uses the standard library (urllib).
+dependencies = []
+
+[project.optional-dependencies]
+# Test-only: the parity test parses the embedded OpenAPI spec. Importers
+# of the SDK never pull this.
+test = ["pyyaml>=6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+deployserver_sdk = ["py.typed"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src/deployserver_sdk"]
+# json.loads returns Any by definition, so the typed methods necessarily
+# "return Any" internally. Their public signatures still carry the real
+# return types and are enforced at every call site (and by pyright strict).
+# This is the one strict sub-flag that is inappropriate at a JSON boundary.
+warn_return_any = false
+
+[tool.pyright]
+include = ["src/deployserver_sdk"]
+typeCheckingMode = "strict"
+pythonVersion = "3.11"

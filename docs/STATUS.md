@@ -738,7 +738,7 @@ deployctl images via a `VERSION` build arg (Dockerfiles + bake);
 **Done.**
 
 - New module **`services/sdk`** (`github.com/your-org/deployserver/sdk`):
-  a typed Go client covering all **51** operator operations —
+  a typed Go client covering all **54** operator operations —
   `sdk.New(sdk.Options{BaseURL, Token, HTTP})` then one method per
   endpoint (`ListMachines`, `IssueDeployment`, `BulkDeploy`,
   `ReportJobsCSV`, …). **Zero dependencies — full stop:** the module's
@@ -779,7 +779,7 @@ deployctl images via a `VERSION` build arg (Dockerfiles + bake);
 **Done.**
 
 - New package **`services/sdk-ts`** (`@your-org/deployserver-sdk`): a
-  typed TypeScript/JavaScript client covering the same **51** operations
+  typed TypeScript/JavaScript client covering the same **54** operations
   as the Go SDK. `new DeployClient({ baseUrl, token })` then one method
   per endpoint. Ships **ESM + `.d.ts`**; runs in Node 18+ and the browser.
 - **Zero runtime dependencies.** HTTP rides on the global `fetch`; a
@@ -808,6 +808,39 @@ deployctl images via a `VERSION` build arg (Dockerfiles + bake);
 - `Makefile`: new `test-ts` target, folded into `test`; `sync-sdk-spec`
   refreshes both SDK copies. CI: an `actions/setup-node` step + an
   `npm ci && npm test` stage in the single consolidated job.
+
+## Phase 30 — Python SDK
+
+**Done.**
+
+- New package **`services/sdk-py`** (`deployserver-sdk`, importable as
+  `deployserver_sdk`): a typed Python client covering the full **54**
+  operations. `DeployClient("https://…", token=…)` then one method per
+  endpoint. Requires Python 3.11+.
+- **Zero runtime dependencies.** HTTP goes through the standard library
+  (`urllib.request`); `pip install deployserver-sdk` pulls nothing else.
+  PyYAML (parity test) is a `[test]` extra, never a runtime dep.
+- **Fully typed.** `TypedDict` models, a `py.typed` marker, clean
+  **`mypy --strict`** and **`pyright` (strict)** runs. Typed errors:
+  `ApiError` + `is_not_found` / `is_forbidden`.
+- **Parity gate** (`tests/test_parity.py`): embeds a byte-identical copy
+  of the spec and asserts an EXACT bijection between `ALL_OPERATIONS` and
+  the spec's paths+methods. Because the client references the named
+  operation constants directly, **dropping one is also a static
+  type-check error** (`Name "OP_ME" is not defined`) — the same
+  compile-time guarantee the TypeScript SDK gives. Proven on injected
+  drift. A sync test asserts the embedded copy is byte-identical to the
+  api source (`make sync-sdk-spec` now refreshes all three SDK copies).
+- Behavior tests: `unittest` + a real threaded `http.server` exercised
+  through the SDK's real `urllib` transport — standard library only.
+- Built against the current **54-operation** surface (49 operator routes
+  + `auth/config`, plus the profile-preview and three vendor-driverpack
+  endpoints merged in PRs #21/#24). The earlier off-by-one "51" in the Go
+  and TS SDK docs + the Phase 28/29 entries above was corrected to the
+  real count in the same change.
+- `Makefile`: new `test-py` target, folded into `test`. CI: an
+  `actions/setup-python` step + a `pip install -e ".[test]" mypy pyright`
+  → `mypy` → `pyright` → `unittest` stage in the consolidated job.
 
 ## Phase 11 — Final docs
 **Done.**

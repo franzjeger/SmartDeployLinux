@@ -13,7 +13,7 @@ is enforced on a hand-written, idiomatic client.
   `require`; importing it adds nothing to your `go.sum`. (The spec-parity
   check that needs a YAML parser lives in a separate internal module,
   `./spectest`, so its test dependency never reaches you.)
-- **All 51 operations** across machines, profiles, images, driver-packs,
+- **All 54 operations** across machines, profiles, images, driver-packs,
   catalog, jobs, deployments, reports, users, sites, bootstrap-sticks,
   and audit.
 - **Typed errors.** `IsNotFound(err)` / `IsForbidden(err)` and a rich

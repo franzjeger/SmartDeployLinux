@@ -109,13 +109,15 @@ Then:
 The REST API is documented at `/api/docs` (human) and `/api/openapi.yaml`
 (OpenAPI 3.1, for client generation) on a running server. Typed clients
 built from that contract ship in-repo, each with zero runtime
-dependencies, all 51 operations, and a parity test that keeps it in exact
+dependencies, all 54 operations, and a parity test that keeps it in exact
 correspondence with the spec:
 
 - **Go** — [`services/sdk`](services/sdk/README.md). `deployctl`'s
   `machines` commands are built on it.
 - **TypeScript** — [`services/sdk-ts`](services/sdk-ts/README.md). ESM +
   `.d.ts`, runs in Node 18+ and the browser on the global `fetch`.
+- **Python** — [`services/sdk-py`](services/sdk-py/README.md). `TypedDict`
+  models, `py.typed`, clean under `mypy --strict` and `pyright`.
 
 ## Status
 

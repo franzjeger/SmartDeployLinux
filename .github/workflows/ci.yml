@@ -54,6 +54,10 @@ jobs:
           cache: npm
           cache-dependency-path: services/sdk-ts/package-lock.json
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: build / vet / test all services
         env:
           # Only the api module has integration tests that require this.
@@ -85,6 +89,16 @@ jobs:
           set -euo pipefail
           npm ci
           npm test
+
+      - name: python sdk — typecheck / test
+        working-directory: services/sdk-py
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[test]" mypy pyright
+          mypy
+          pyright
+          python -m unittest discover -s tests
 
       - name: syntax-check shell scripts
         run: |

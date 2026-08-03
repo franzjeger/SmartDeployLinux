@@ -55,7 +55,7 @@ migrate: ## Run DB migrations.
 
 # --- tests -----------------------------------------------------------------
 
-test: test-unit test-ts ## Run unit tests (Go + TypeScript SDK).
+test: test-unit test-ts test-py ## Run unit tests (Go + TypeScript + Python SDKs).
 
 test-unit: ## Run Go unit tests across all services.
 	cd services/api && go test ./...
@@ -70,9 +70,14 @@ test-unit: ## Run Go unit tests across all services.
 test-ts: ## Build + test the TypeScript SDK (needs Node 18+).
 	cd services/sdk-ts && npm ci && npm test
 
-sync-sdk-spec: ## Refresh both SDKs' embedded OpenAPI spec from the api source of truth.
+test-py: ## Type-check + test the Python SDK (needs Python 3.11+).
+	cd services/sdk-py && python3 -m pip install -q -e ".[test]" && \
+	  python3 -m unittest discover -s tests
+
+sync-sdk-spec: ## Refresh every SDK's embedded OpenAPI spec from the api source of truth.
 	cp services/api/internal/apispec/openapi.yaml services/sdk/openapi.yaml
 	cp services/api/internal/apispec/openapi.yaml services/sdk-ts/openapi.yaml
+	cp services/api/internal/apispec/openapi.yaml services/sdk-py/openapi.yaml
 
 test-e2e: ## Run the deploy-spine e2e smoke test (needs DEPLOY_TEST_PG_DSN).
 	cd tests/e2e && go test ./... -count=1 -v
