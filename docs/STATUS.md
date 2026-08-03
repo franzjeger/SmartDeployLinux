@@ -878,6 +878,23 @@ the short-lived-ID-token gap called out when the SDKs shipped.
   at 57. Verified against a local Postgres 16.
 - Docs: `docs/SECURITY.md` §"API tokens"; README auth section.
 
+## Phase 32 — API tokens UI panel
+
+**Done.**
+
+- New **API tokens** panel in the operator SPA (`#/api-tokens`, nav item
+  after Users): lists the caller's own tokens with color-coded status
+  (active / expired / revoked), created / expires / last-used times, and a
+  per-row Revoke (hidden once revoked). "New token" opens a name +
+  optional-expiry form; on create the one-time secret is revealed in a
+  follow-up modal with a copy button and a "shown only once" warning, then
+  the list refreshes. Revoke goes through the standard confirm dialog.
+- Pure front-end (`services/api/internal/ui/assets/app.js` +
+  `index.html`), built on the existing `api()` / `openModal` / `toast` /
+  `confirmModal` helpers and the Phase 31 endpoints — no new backend.
+- Verified by rendering the panel and both modals in headless Chromium
+  against a mock of the three endpoints (list, create, empty state).
+
 ## Phase 11 — Final docs
 **Done.**
 
