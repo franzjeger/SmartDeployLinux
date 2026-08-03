@@ -15,7 +15,7 @@ dropping an operation is a **compile error**, not just a test failure.
   (Node 18+ and every modern browser). The YAML parser the parity test
   needs is a **devDependency**, so `npm install @your-org/deployserver-sdk`
   pulls nothing but this package.
-- **All 54 operations** across machines, profiles, images, driver-packs,
+- **All 57 operations** across machines, profiles, images, driver-packs,
   catalog, jobs, deployments, reports, users, sites, bootstrap-sticks,
   and audit.
 - **Typed errors.** `isNotFound(err)` / `isForbidden(err)` and a rich

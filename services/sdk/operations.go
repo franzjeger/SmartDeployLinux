@@ -59,6 +59,9 @@ var (
 	opListRoles           = Operation{"listRoles", "GET", "/api/v1/roles"}
 	opGrantRole           = Operation{"grantUserRole", "POST", "/api/v1/users/{id}/roles"}
 	opRevokeRole          = Operation{"revokeUserRole", "DELETE", "/api/v1/users/{id}/roles/{role}"}
+	opCreateAPIToken      = Operation{"createAPIToken", "POST", "/api/v1/api-tokens"}
+	opListAPITokens       = Operation{"listAPITokens", "GET", "/api/v1/api-tokens"}
+	opRevokeAPIToken      = Operation{"revokeAPIToken", "DELETE", "/api/v1/api-tokens/{id}"}
 	opListSites           = Operation{"listSites", "GET", "/api/v1/sites"}
 	opUpsertSite          = Operation{"upsertSite", "PUT", "/api/v1/sites"}
 	opDeleteSite          = Operation{"deleteSite", "DELETE", "/api/v1/sites/{name}"}
@@ -82,6 +85,7 @@ var AllOperations = []Operation{
 	opReportSummary, opReportDaily, opReportByProfile, opReportBySite, opReportJobsCSV,
 	opIssueDeployment, opBulkDeploy,
 	opListUsers, opListRoles, opGrantRole, opRevokeRole,
+	opCreateAPIToken, opListAPITokens, opRevokeAPIToken,
 	opListSites, opUpsertSite, opDeleteSite,
 	opListSticks, opRegisterStick, opStickConfig,
 }

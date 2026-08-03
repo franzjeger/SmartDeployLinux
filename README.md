@@ -29,7 +29,8 @@ LAN by PXE's L2-broadcast dependency.
 - Wake-on-LAN scheduling, bulk deployments, job webhooks, reporting
   dashboard with CSV export, Prometheus/Grafana observability.
 - Web UI + REST API + CLI (OIDC PKCE + device-flow login). RBAC via
-  OIDC. mTLS service-to-service.
+  OIDC. Long-lived, revocable API tokens (`deployctl api-tokens create`)
+  for headless clients and automation. mTLS service-to-service.
 - Single-host `docker compose up` for the small tier; 3-node HA tier with
   external Postgres + S3.
 
@@ -109,7 +110,7 @@ Then:
 The REST API is documented at `/api/docs` (human) and `/api/openapi.yaml`
 (OpenAPI 3.1, for client generation) on a running server. Typed clients
 built from that contract ship in-repo, each with zero runtime
-dependencies, all 54 operations, and a parity test that keeps it in exact
+dependencies, all 57 operations, and a parity test that keeps it in exact
 correspondence with the spec:
 
 - **Go** — [`services/sdk`](services/sdk/README.md). `deployctl`'s

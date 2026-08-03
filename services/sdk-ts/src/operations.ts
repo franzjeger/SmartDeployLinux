@@ -79,6 +79,10 @@ export const OPERATIONS = {
   grantUserRole: op("grantUserRole", "POST", "/api/v1/users/{id}/roles"),
   revokeUserRole: op("revokeUserRole", "DELETE", "/api/v1/users/{id}/roles/{role}"),
 
+  createAPIToken: op("createAPIToken", "POST", "/api/v1/api-tokens"),
+  listAPITokens: op("listAPITokens", "GET", "/api/v1/api-tokens"),
+  revokeAPIToken: op("revokeAPIToken", "DELETE", "/api/v1/api-tokens/{id}"),
+
   listSites: op("listSites", "GET", "/api/v1/sites"),
   upsertSite: op("upsertSite", "PUT", "/api/v1/sites"),
   deleteSite: op("deleteSite", "DELETE", "/api/v1/sites/{name}"),

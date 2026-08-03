@@ -348,6 +348,29 @@ export interface VendorFetchJob {
   finished_at: string | null;
 }
 
+/** A long-lived API token. The secret is never included. */
+export interface APIToken {
+  id: string;
+  name: string;
+  prefix: string;
+  user_id: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface CreateAPITokenInput {
+  name: string;
+  /** Omit for a non-expiring token. */
+  expires_in_days?: number;
+}
+
+/** Create response: the stored record plus the one-time plaintext secret. */
+export interface CreatedAPIToken extends APIToken {
+  token: string;
+}
+
 /** Result of rendering a profile template with a synthetic machine. */
 export interface ProfilePreview {
   rendered: string;

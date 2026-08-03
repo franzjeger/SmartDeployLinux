@@ -11,9 +11,12 @@ import urllib.request
 from typing import Any, Callable, Mapping, Optional, cast
 
 from .models import (
+    APIToken,
     AuditEvent,
     AuthConfig,
     BlobUpload,
+    CreateAPITokenInput,
+    CreatedAPIToken,
     BulkDeployInput,
     BulkResult,
     CreateBlobInput,
@@ -52,6 +55,7 @@ from .operations import (
     OP_AUTH_CONFIG,
     OP_BULK_DEPLOY,
     OP_CANCEL_JOB,
+    OP_CREATE_API_TOKEN,
     OP_CREATE_BLOB,
     OP_CREATE_DRIVER_PACK,
     OP_CREATE_IMAGE,
@@ -72,6 +76,7 @@ from .operations import (
     OP_GRANT_ROLE,
     OP_INSTALL_CATALOG,
     OP_ISSUE_DEPLOYMENT,
+    OP_LIST_API_TOKENS,
     OP_LIST_CATALOG,
     OP_LIST_DRIVER_PACKS,
     OP_LIST_IMAGE_VERSIONS,
@@ -94,6 +99,7 @@ from .operations import (
     OP_REPORT_DAILY,
     OP_REPORT_JOBS_CSV,
     OP_REPORT_SUMMARY,
+    OP_REVOKE_API_TOKEN,
     OP_REVOKE_ROLE,
     OP_SEARCH_VENDOR_PACKS,
     OP_STICK_CONFIG,
@@ -428,6 +434,20 @@ class DeployClient:
 
     def revoke_role(self, user_id: str, role: str) -> None:
         self._none(OP_REVOKE_ROLE, params={"id": user_id, "role": role})
+
+    # --- API tokens -----------------------------------------------------
+
+    def create_api_token(self, input: CreateAPITokenInput) -> CreatedAPIToken:
+        """Mint a long-lived token. The ``token`` field of the result is the
+        plaintext secret, returned only once."""
+        return self._json(OP_CREATE_API_TOKEN, body=input)
+
+    def list_api_tokens(self) -> list[APIToken]:
+        """The caller's own tokens (never their secrets)."""
+        return self._json(OP_LIST_API_TOKENS)
+
+    def revoke_api_token(self, token_id: str) -> None:
+        self._none(OP_REVOKE_API_TOKEN, params={"id": token_id})
 
     # --- sites ----------------------------------------------------------
 

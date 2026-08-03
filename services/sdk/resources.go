@@ -319,6 +319,25 @@ func (c *Client) RevokeRole(ctx context.Context, userID, role string) error {
 	return c.do(ctx, opRevokeRole, map[string]string{"id": userID, "role": role}, nil, nil, nil)
 }
 
+// --- API tokens -------------------------------------------------------
+
+// CreateAPIToken mints a long-lived token. The returned Token is the
+// plaintext secret and is available only in this response.
+func (c *Client) CreateAPIToken(ctx context.Context, in CreateAPITokenInput) (*CreatedAPIToken, error) {
+	var out CreatedAPIToken
+	return &out, c.do(ctx, opCreateAPIToken, nil, nil, in, &out)
+}
+
+// ListAPITokens returns the caller's own tokens (never their secrets).
+func (c *Client) ListAPITokens(ctx context.Context) ([]APIToken, error) {
+	var out []APIToken
+	return out, c.do(ctx, opListAPITokens, nil, nil, nil, &out)
+}
+
+func (c *Client) RevokeAPIToken(ctx context.Context, id string) error {
+	return c.do(ctx, opRevokeAPIToken, map[string]string{"id": id}, nil, nil, nil)
+}
+
 // --- sites ------------------------------------------------------------
 
 func (c *Client) ListSites(ctx context.Context) ([]Site, error) {

@@ -32,3 +32,25 @@ func TestHashBootToken_PepperSensitive(t *testing.T) {
 		t.Fatal("pepper not affecting hash")
 	}
 }
+
+func TestHashAPIToken_Deterministic(t *testing.T) {
+	a := HashAPIToken("dpsk_secret", []byte("deploy.example.com"))
+	b := HashAPIToken("dpsk_secret", []byte("deploy.example.com"))
+	if a != b || a[:7] != "sha256:" {
+		t.Fatalf("not deterministic or bad format: %q vs %q", a, b)
+	}
+}
+
+func TestHashAPIToken_PepperSensitive(t *testing.T) {
+	if HashAPIToken("t", []byte("p")) == HashAPIToken("t", []byte("q")) {
+		t.Fatal("pepper not affecting hash")
+	}
+}
+
+// The two token namespaces must not collide: the same secret+pepper must
+// hash differently for boot tokens vs API tokens (domain separation).
+func TestHashAPIToken_DomainSeparatedFromBoot(t *testing.T) {
+	if HashAPIToken("same", []byte("pep")) == HashBootToken("same", []byte("pep")) {
+		t.Fatal("API and boot token hashes collide under the same input")
+	}
+}

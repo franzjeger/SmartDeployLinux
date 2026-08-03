@@ -357,3 +357,29 @@ type ProfilePreview struct {
 	YAMLError string `json:"yaml_error"`
 	Fallback  bool   `json:"fallback"`
 }
+
+// APIToken is a long-lived personal access token. The secret is never
+// returned after creation — only its display prefix.
+type APIToken struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	UserID     string     `json:"user_id"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	RevokedAt  *time.Time `json:"revoked_at"`
+}
+
+type CreateAPITokenInput struct {
+	Name string `json:"name"`
+	// ExpiresInDays, when set, makes the token expire; omit for no expiry.
+	ExpiresInDays *int `json:"expires_in_days,omitempty"`
+}
+
+// CreatedAPIToken is the create response: the stored record plus the
+// plaintext secret, which is returned exactly once.
+type CreatedAPIToken struct {
+	APIToken
+	Token string `json:"token"`
+}

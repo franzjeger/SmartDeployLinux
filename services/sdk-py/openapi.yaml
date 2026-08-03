@@ -31,6 +31,7 @@ tags:
   - name: sites
   - name: bootstrap-sticks
   - name: audit
+  - name: api-tokens
 
 paths:
   /api/v1/auth/config:
@@ -686,6 +687,63 @@ paths:
                   control_url: { type: string }
                   tailnet: { type: string }
 
+  /api/v1/api-tokens:
+    get:
+      tags: [api-tokens]
+      summary: List your API tokens
+      description: >
+        Requires `apitoken.read` or `*`. Returns the caller's own tokens
+        (the secret is never included; revoked and expired tokens are
+        listed with their `revoked_at` / `expires_at` set).
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/APIToken" }
+    post:
+      tags: [api-tokens]
+      summary: Create an API token
+      description: >
+        Requires `apitoken.write` or `*`. Mints a long-lived bearer token
+        that authenticates as the calling user (inheriting exactly that
+        user's permissions). The plaintext secret is returned **once** in
+        this response and never again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, description: "Human label, e.g. 'ci-runner'" }
+                expires_in_days: { type: integer, minimum: 1, description: "Omit for a non-expiring token" }
+      responses:
+        "201":
+          description: Created — carries the one-time secret
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedAPIToken" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/api-tokens/{id}:
+    delete:
+      tags: [api-tokens]
+      summary: Revoke an API token
+      description: >
+        Requires `apitoken.write` or `*`. Revokes one of the caller's own
+        tokens. Idempotent only in effect — a second revoke returns 404.
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -708,6 +766,26 @@ components:
     NotFound: { description: Not found }
     Conflict: { description: State conflict }
   schemas:
+    APIToken:
+      type: object
+      description: A long-lived API token. The secret is never included.
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string, description: "Display prefix, e.g. 'dpsk_ab12cd'" }
+        user_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+    CreatedAPIToken:
+      allOf:
+        - $ref: "#/components/schemas/APIToken"
+        - type: object
+          properties:
+            token:
+              type: string
+              description: The plaintext secret — shown once, at creation, and never again.
     Machine:
       type: object
       properties:
