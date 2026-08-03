@@ -2727,6 +2727,131 @@ route("/users", async () => {
   }));
 });
 
+// ---------- views: API tokens ----------
+
+route("/api-tokens", async () => {
+  setBreadcrumb([{label:"API tokens"}]);
+  let tokens;
+  try {
+    tokens = await api("GET", "/api/v1/api-tokens");
+  } catch (e) {
+    $("#content").innerHTML = `
+      <div class="page"><div class="page-title"><h1>API tokens</h1></div>
+      <div class="card"><div class="empty muted">${escapeHTML(e.message)}<br>
+      <span class="small">You need the <code>apitoken.read</code> permission to view tokens.</span></div></div></div>`;
+    return;
+  }
+  const now = Date.now();
+  const status = t => t.revoked_at
+    ? { c: "err", l: "revoked" }
+    : (t.expires_at && new Date(t.expires_at).getTime() < now)
+      ? { c: "warn", l: "expired" }
+      : { c: "ok", l: "active" };
+
+  $("#content").innerHTML = `
+    <div class="page">
+      <div class="page-title">
+        <div><h1>API tokens</h1>
+        <p class="subtitle">Long-lived personal access tokens for headless clients — the SDKs,
+        <code>deployctl</code>, CI. Each authenticates <strong>as you</strong> and carries your
+        permissions. The secret is shown only once, at creation.</p></div>
+        <div class="page-actions"><button class="btn" id="new-token">New token</button></div>
+      </div>
+      ${tokens.length ? `
+        <div class="table-wrap"><table>
+          <thead><tr>
+            <th>Name</th><th>Prefix</th><th>Status</th><th>Created</th><th>Expires</th><th>Last used</th><th></th>
+          </tr></thead>
+          <tbody>
+          ${tokens.map(t => { const s = status(t); return `
+            <tr class="no-hover">
+              <td><strong>${escapeHTML(t.name)}</strong></td>
+              <td class="mono small">${escapeHTML(t.prefix)}…</td>
+              <td><span class="badge ${s.c}"><span class="dot"></span>${s.l}</span></td>
+              <td class="muted small">${fmtTime(t.created_at)}</td>
+              <td class="muted small">${t.expires_at ? fmtAbsolute(t.expires_at) : "never"}</td>
+              <td class="muted small">${t.last_used_at ? fmtTime(t.last_used_at) : "—"}</td>
+              <td>${t.revoked_at ? "" : `<button class="btn-ghost danger revoke-token" data-id="${t.id}" data-name="${escapeHTML(t.name)}">Revoke</button>`}</td>
+            </tr>`; }).join("")}
+          </tbody>
+        </table></div>` : `
+        <div class="card"><div class="empty">
+          <div class="empty-icon">⚿</div>
+          <div>No API tokens yet.</div>
+          <p class="small muted">Create one to authenticate the SDKs or <code>deployctl</code> without an
+          interactive login — set <code>DEPLOY_API_TOKEN</code> to the secret you receive.</p>
+        </div></div>`}
+    </div>`;
+
+  $("#new-token").addEventListener("click", openCreateTokenModal);
+  $$(".revoke-token").forEach(b => b.addEventListener("click", async () => {
+    const ok = await confirmModal({
+      title: "Revoke token",
+      message: `Revoke "${b.dataset.name}"? Any client using it will immediately start getting 401s.`,
+      danger: true, primaryLabel: "Revoke",
+    });
+    if (!ok) return;
+    try {
+      await api("DELETE", "/api/v1/api-tokens/" + encodeURIComponent(b.dataset.id));
+      toast("Token revoked", "ok");
+      navigate();
+    } catch (e) { toast(e.message, "err"); }
+  }));
+});
+
+function openCreateTokenModal() {
+  openModal({
+    title: "New API token",
+    body: `
+      <form id="token-form">
+        <div class="row"><label class="full">Name
+          <input name="name" placeholder="ci-runner" autocomplete="off" required>
+        </label></div>
+        <div class="row"><label class="full">Expires in (days)
+          <input name="days" type="number" min="1" placeholder="leave blank for no expiry" autocomplete="off">
+        </label></div>
+        <p class="small muted">The token authenticates as you and carries your current permissions.
+        Prefer a short expiry for automation you can re-issue.</p>
+      </form>`,
+    primary: { label: "Create" },
+    secondary: "Cancel",
+    onPrimary: async modal => {
+      const fd = new FormData($("#token-form", modal));
+      const name = String(fd.get("name") || "").trim();
+      if (!name) { toast("Name is required", "err"); return false; }
+      const body = { name };
+      const days = parseInt(String(fd.get("days") || ""), 10);
+      if (Number.isInteger(days) && days > 0) body.expires_in_days = days;
+      const created = await api("POST", "/api/v1/api-tokens", body);
+      // Replace this modal with the one-time secret reveal. Returning false
+      // keeps openModal from clearing the root we just repopulated.
+      showTokenSecret(created);
+      return false;
+    },
+  });
+}
+
+function showTokenSecret(created) {
+  openModal({
+    title: "Token created",
+    body: `
+      <p class="small muted">Copy this now — it will <strong>never be shown again</strong>.</p>
+      <pre class="mono small" style="white-space:pre-wrap;overflow-x:auto;user-select:all;">${escapeHTML(created.token)}</pre>
+      <p class="small muted">Use it as a bearer token: set <code>DEPLOY_API_TOKEN</code> to this value for
+      the SDKs or <code>deployctl</code>.</p>`,
+    primary: { label: "Copy secret" },
+    secondary: "Done",
+    onPrimary: async () => {
+      try {
+        await navigator.clipboard.writeText(created.token);
+        toast("Secret copied", "ok");
+      } catch { toast("Copy failed — select the text manually", "err"); }
+      return false; // keep the reveal open so it can still be read/copied
+    },
+    onClose: navigate, // refresh the list to show the new token
+  });
+}
+
 // ---------- views: Audit ----------
 
 let auditState = { since: "24h", action: "" };
