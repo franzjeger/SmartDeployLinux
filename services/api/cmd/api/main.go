@@ -178,6 +178,9 @@ func serve() {
 		slog.Warn("OIDC verifier unavailable; public API will be open", "err", err)
 	} else {
 		auth.SetUserResolver(auth.ResolverFromPool(st.Pool()))
+		// Long-lived API tokens are verified against the DB using the same
+		// pepper (the deploy FQDN) the create handler hashes with.
+		auth.SetAPITokenAuthenticator(auth.NewAPITokenAuthenticator(st, []byte(deployFQDN)))
 	}
 
 	// Drain vendor driver-pack fetch jobs in the background (#18).
@@ -459,6 +462,9 @@ func (h *handlers) registerOperatorRoutes(r chi.Router) {
 	r.Get("/roles", h.listRoles)
 	r.Post("/users/{id}/roles", h.grantUserRole)
 	r.Delete("/users/{id}/roles/{role}", h.revokeUserRole)
+	r.Post("/api-tokens", h.createAPIToken)
+	r.Get("/api-tokens", h.listAPITokens)
+	r.Delete("/api-tokens/{id}", h.revokeAPIToken)
 	r.Get("/sites", h.listSites)
 	r.Put("/sites", h.upsertSite)
 	r.Delete("/sites/{name}", h.deleteSite)

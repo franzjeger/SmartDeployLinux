@@ -13,7 +13,7 @@ constants directly, dropping one is caught **statically** by mypy/pyright
 
 - **Zero runtime dependencies.** HTTP goes through the standard library
   (`urllib.request`). `pip install deployserver-sdk` pulls nothing else.
-- **All 54 operations** across machines, profiles, images, driver-packs,
+- **All 57 operations** across machines, profiles, images, driver-packs,
   catalog, jobs, deployments, reports, users, sites, bootstrap-sticks,
   and audit.
 - **Fully typed** — `TypedDict` models, a `py.typed` marker, and clean

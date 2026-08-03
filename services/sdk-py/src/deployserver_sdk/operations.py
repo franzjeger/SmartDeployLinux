@@ -81,6 +81,10 @@ OP_LIST_ROLES = Operation("listRoles", "GET", "/api/v1/roles")
 OP_GRANT_ROLE = Operation("grantUserRole", "POST", "/api/v1/users/{id}/roles")
 OP_REVOKE_ROLE = Operation("revokeUserRole", "DELETE", "/api/v1/users/{id}/roles/{role}")
 
+OP_CREATE_API_TOKEN = Operation("createAPIToken", "POST", "/api/v1/api-tokens")
+OP_LIST_API_TOKENS = Operation("listAPITokens", "GET", "/api/v1/api-tokens")
+OP_REVOKE_API_TOKEN = Operation("revokeAPIToken", "DELETE", "/api/v1/api-tokens/{id}")
+
 OP_LIST_SITES = Operation("listSites", "GET", "/api/v1/sites")
 OP_UPSERT_SITE = Operation("upsertSite", "PUT", "/api/v1/sites")
 OP_DELETE_SITE = Operation("deleteSite", "DELETE", "/api/v1/sites/{name}")
@@ -107,6 +111,7 @@ ALL_OPERATIONS: list[Operation] = [
     OP_REPORT_SUMMARY, OP_REPORT_DAILY, OP_REPORT_BY_PROFILE, OP_REPORT_BY_SITE, OP_REPORT_JOBS_CSV,
     OP_ISSUE_DEPLOYMENT, OP_BULK_DEPLOY,
     OP_LIST_USERS, OP_LIST_ROLES, OP_GRANT_ROLE, OP_REVOKE_ROLE,
+    OP_CREATE_API_TOKEN, OP_LIST_API_TOKENS, OP_REVOKE_API_TOKEN,
     OP_LIST_SITES, OP_UPSERT_SITE, OP_DELETE_SITE,
     OP_LIST_STICKS, OP_REGISTER_STICK, OP_STICK_CONFIG,
 ]

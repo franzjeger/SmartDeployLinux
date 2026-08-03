@@ -45,6 +45,33 @@ whole and the audit/key-rotation/incident-response side.
   scrub step (Linux: cloud-init `bootcmd` that removes the
   user-data fetch).
 
+## API tokens
+
+Long-lived API tokens let headless clients (SDKs, `deployctl`, CI,
+automation) authenticate without the interactive OIDC device flow, whose
+ID tokens are short-lived.
+
+- **Scope.** A token authenticates **as** its owning user and carries
+  exactly that user's roles/permissions. It cannot grant more than the
+  owner already has, so self-service issuance (`apitoken.write`, seeded to
+  the operator role) is safe.
+- **Storage.** Only a peppered SHA-256 hash is stored
+  (`tokens.HashAPIToken`, domain-separated from boot tokens via a distinct
+  digest tag; pepper = the deploy FQDN, as for boot tokens). The plaintext
+  secret is returned exactly once, at creation, and is unrecoverable
+  afterward. Listings show only a short `dpsk_…` display prefix.
+- **Lifecycle.** Tokens are individually revocable
+  (`DELETE /api/v1/api-tokens/{id}`) and may carry an expiry; verification
+  rejects revoked or expired tokens and stamps `last_used_at` for audit.
+  Creation and revocation are audited (`api_token.created` / `.revoked`).
+- **Transport.** Presented as `Authorization: Bearer dpsk_…`. The auth
+  middleware routes the `dpsk_` prefix to DB verification instead of OIDC.
+  API tokens require an OIDC-configured deployment — with OIDC unset the
+  operator API is open (dev mode) and no bearer is consulted.
+- **Rotation.** Prefer a short `--expires-in-days`; to rotate, create a
+  new token, cut clients over, then revoke the old one. Revocation takes
+  effect immediately (the next request 401s).
+
 ## 3. Rate limits and DoS
 
 | Endpoint | Per IP | Per object |

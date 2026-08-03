@@ -17,6 +17,8 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
+
+	"github.com/your-org/deployserver/api/internal/tokens"
 )
 
 type Verifier struct {
@@ -66,6 +68,28 @@ func Middleware(v *Verifier) func(http.Handler) http.Handler {
 				http.Error(w, "missing bearer token", http.StatusUnauthorized)
 				return
 			}
+			// Long-lived API tokens carry a fixed prefix and are verified
+			// against the database rather than the IdP. This lets headless
+			// clients (SDKs, deployctl, CI) authenticate without the OIDC
+			// device flow.
+			if strings.HasPrefix(tok, tokens.APITokenPrefix) {
+				if apiTokenAuth == nil {
+					http.Error(w, "api tokens not enabled", http.StatusUnauthorized)
+					return
+				}
+				p, err := apiTokenAuth(r.Context(), tok)
+				if err != nil {
+					http.Error(w, "invalid api token", http.StatusUnauthorized)
+					return
+				}
+				ctx := context.WithValue(r.Context(), ctxKeyPrincipal, p)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			if v == nil {
+				http.Error(w, "token auth not configured", http.StatusUnauthorized)
+				return
+			}
 			idTok, err := v.v.Verify(r.Context(), tok)
 			if err != nil {
 				http.Error(w, "invalid token: "+err.Error(), http.StatusUnauthorized)
@@ -107,6 +131,49 @@ type UserResolver func(ctx context.Context, p *principal) error
 var globalResolver UserResolver
 
 func SetUserResolver(r UserResolver) { globalResolver = r }
+
+// APITokenAuthenticator verifies a presented long-lived API token and
+// returns the principal it authenticates as. It is consulted by
+// Middleware for any bearer carrying tokens.APITokenPrefix.
+type APITokenAuthenticator func(ctx context.Context, presented string) (*principal, error)
+
+var apiTokenAuth APITokenAuthenticator
+
+// SetAPITokenAuthenticator installs the API-token verification path.
+// Without it, API-token bearers are rejected (401).
+func SetAPITokenAuthenticator(a APITokenAuthenticator) { apiTokenAuth = a }
+
+// APITokenStore is the slice of the store the API-token authenticator
+// needs. *store.Store satisfies it.
+type APITokenStore interface {
+	AuthenticateAPIToken(ctx context.Context, hash string) (uuid.UUID, bool, error)
+	LoadUserPermissions(ctx context.Context, userID uuid.UUID) ([]string, error)
+}
+
+// NewAPITokenAuthenticator builds an authenticator over the given store,
+// hashing presented tokens with pepper (which must equal the pepper the
+// create handler used — the deploy FQDN). A token authenticates as its
+// owning user, carrying exactly that user's permissions.
+func NewAPITokenAuthenticator(ts APITokenStore, pepper []byte) APITokenAuthenticator {
+	return func(ctx context.Context, presented string) (*principal, error) {
+		uid, ok, err := ts.AuthenticateAPIToken(ctx, tokens.HashAPIToken(presented, pepper))
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errors.New("unknown, revoked, or expired api token")
+		}
+		perms, err := ts.LoadUserPermissions(ctx, uid)
+		if err != nil {
+			return nil, err
+		}
+		p := &principal{UserID: uid, Perms: make(map[string]struct{}, len(perms))}
+		for _, perm := range perms {
+			p.Perms[perm] = struct{}{}
+		}
+		return p, nil
+	}
+}
 
 // HasPerm returns true if the request principal carries the named
 // permission, OR carries the wildcard "*". With OIDC unconfigured
@@ -164,4 +231,3 @@ func bearer(r *http.Request) string {
 	}
 	return ""
 }
-

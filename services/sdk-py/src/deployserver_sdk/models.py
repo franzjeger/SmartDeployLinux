@@ -360,3 +360,28 @@ class ProfilePreview(TypedDict):
     yaml_valid: bool
     yaml_error: str
     fallback: bool
+
+
+class APIToken(TypedDict):
+    """A long-lived personal access token. The secret is never included."""
+
+    id: str
+    name: str
+    prefix: str
+    user_id: str
+    created_at: str
+    expires_at: str | None
+    last_used_at: str | None
+    revoked_at: str | None
+
+
+class CreateAPITokenInput(TypedDict):
+    name: str
+    #: Omit for a non-expiring token.
+    expires_in_days: NotRequired[int]
+
+
+class CreatedAPIToken(APIToken):
+    """Create response: the stored record plus the one-time plaintext secret."""
+
+    token: str

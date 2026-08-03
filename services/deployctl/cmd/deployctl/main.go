@@ -41,6 +41,8 @@ func main() {
 		imagesMain(os.Args[2:])
 	case "auth":
 		authMain(os.Args[2:])
+	case "api-tokens":
+		apiTokensMain(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -65,6 +67,7 @@ Groups:
   bootstrap-sticks   Inventory of physical bootstrap USB sticks
   images             List images, upload new image versions
   auth               OIDC device-flow login for the CLI
+  api-tokens         Create/list/revoke long-lived API tokens
 
 Environment:
   DEPLOY_API_URL                      e.g. https://deploy.example.com

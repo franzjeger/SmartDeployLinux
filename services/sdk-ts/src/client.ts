@@ -1,8 +1,11 @@
 import { OPERATIONS, type Operation } from "./operations.js";
 import type {
+  APIToken,
   AuditEvent,
   AuthConfig,
   BlobUpload,
+  CreateAPITokenInput,
+  CreatedAPIToken,
   BulkDeployInput,
   BulkResult,
   CreateBlobInput,
@@ -415,6 +418,23 @@ export class DeployClient {
 
   revokeRole(userId: string, role: string): Promise<void> {
     return this.#void(OPERATIONS.revokeUserRole, { params: { id: userId, role } });
+  }
+
+  // --- API tokens -----------------------------------------------------
+
+  /** Mint a long-lived token. `token` in the result is the plaintext
+   * secret, available only in this response. */
+  createAPIToken(input: CreateAPITokenInput): Promise<CreatedAPIToken> {
+    return this.#json(OPERATIONS.createAPIToken, { body: input });
+  }
+
+  /** The caller's own tokens (never their secrets). */
+  listAPITokens(): Promise<APIToken[]> {
+    return this.#json(OPERATIONS.listAPITokens);
+  }
+
+  revokeAPIToken(id: string): Promise<void> {
+    return this.#void(OPERATIONS.revokeAPIToken, { params: { id } });
   }
 
   // --- sites ----------------------------------------------------------

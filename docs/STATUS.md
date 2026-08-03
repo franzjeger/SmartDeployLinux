@@ -738,7 +738,7 @@ deployctl images via a `VERSION` build arg (Dockerfiles + bake);
 **Done.**
 
 - New module **`services/sdk`** (`github.com/your-org/deployserver/sdk`):
-  a typed Go client covering all **54** operator operations —
+  a typed Go client covering all **57** operator operations —
   `sdk.New(sdk.Options{BaseURL, Token, HTTP})` then one method per
   endpoint (`ListMachines`, `IssueDeployment`, `BulkDeploy`,
   `ReportJobsCSV`, …). **Zero dependencies — full stop:** the module's
@@ -779,7 +779,7 @@ deployctl images via a `VERSION` build arg (Dockerfiles + bake);
 **Done.**
 
 - New package **`services/sdk-ts`** (`@your-org/deployserver-sdk`): a
-  typed TypeScript/JavaScript client covering the same **54** operations
+  typed TypeScript/JavaScript client covering the same **57** operations
   as the Go SDK. `new DeployClient({ baseUrl, token })` then one method
   per endpoint. Ships **ESM + `.d.ts`**; runs in Node 18+ and the browser.
 - **Zero runtime dependencies.** HTTP rides on the global `fetch`; a
@@ -841,6 +841,42 @@ deployctl images via a `VERSION` build arg (Dockerfiles + bake);
 - `Makefile`: new `test-py` target, folded into `test`. CI: an
   `actions/setup-python` step + a `pip install -e ".[test]" mypy pyright`
   → `mypy` → `pyright` → `unittest` stage in the consolidated job.
+
+## Phase 31 — Long-lived API tokens
+
+**Done.**
+
+Personal access tokens so headless clients (SDKs, deployctl, CI,
+automation) can authenticate without the interactive OIDC device flow —
+the short-lived-ID-token gap called out when the SDKs shipped.
+
+- **New table `api_tokens`** (migration `0012`): a token is owned by a
+  user and authenticates **as** that user, inheriting exactly the owner's
+  roles/permissions — it can never escalate. Stored only as a peppered
+  SHA-256 hash (`tokens.HashAPIToken`, domain-separated from boot tokens),
+  never plaintext; individually revocable; optional expiry. Self-service
+  perms `apitoken.read` / `apitoken.write` seeded to the operator role.
+- **Auth middleware** now routes any bearer with the `dpsk_` prefix to
+  DB-backed token verification instead of OIDC (`auth.Middleware` +
+  `NewAPITokenAuthenticator` over an `APITokenStore` interface — `*Store`
+  satisfies it). The authenticate query (not-revoked, not-expired,
+  stamps `last_used_at`) is the single source of validity truth. Tokens
+  require an OIDC-configured deployment (dev-mode stays open as before).
+- **3 endpoints** (57 operations total): `POST /api/v1/api-tokens`
+  (returns the secret **once**), `GET /api/v1/api-tokens` (own tokens,
+  never the secret), `DELETE /api/v1/api-tokens/{id}` (revoke). RBAC-gated
+  and audited (`api_token.created` / `.revoked`).
+- **All three SDKs regenerated** to 57 ops (parity + sync gates enforce
+  it), with `APIToken` / `CreateAPITokenInput` / `CreatedAPIToken` models.
+  **`deployctl api-tokens create|list|revoke`** built on the Go SDK.
+- **Tested:** `HashAPIToken` unit (determinism + domain separation);
+  store integration (create/list/revoke/expiry/authenticate/perms);
+  middleware unit (valid/unknown/disabled/no-OIDC paths, fake store); and
+  a full **HTTP round-trip** integration test — create a token, use the
+  freshly minted secret to authenticate, revoke, confirm 401 — which pins
+  the create-handler pepper to the middleware pepper. Contract test green
+  at 57. Verified against a local Postgres 16.
+- Docs: `docs/SECURITY.md` §"API tokens"; README auth section.
 
 ## Phase 11 — Final docs
 **Done.**
