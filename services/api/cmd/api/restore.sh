@@ -37,6 +37,14 @@
 #   DEPLOY_VG                              — LVM VG name (default vg0)
 #   DEPLOY_SWAP                            — LVM swap LV size, e.g. 8G
 #   DEPLOY_NO_REBOOT                       — set non-empty to skip reboot
+#   DEPLOY_TARGET_DISK                     — force the target disk (e.g.
+#                                            /dev/sdb); overrides the
+#                                            largest-fixed-disk auto-pick.
+#                                            Use when the machine has more
+#                                            than one fixed disk and the
+#                                            biggest is not the OS disk, or
+#                                            to drive restore against a
+#                                            specific block device.
 
 set -eu
 
@@ -83,18 +91,28 @@ fi
 report imaging "linux golden restore starting ($BOOT_MODE, layout=$DEPLOY_LAYOUT)"
 
 # --- 1. pick the target disk (DESTRUCTIVE) ---------------------------
-DISK=
-DISK_SIZE=0
-for line in $(lsblk -dbrno NAME,SIZE,TYPE,RM | awk '$3=="disk" && $4=="0" {print $1":"$2}'); do
-    name=${line%%:*}
-    size=${line##*:}
+if [ -n "${DEPLOY_TARGET_DISK:-}" ]; then
+    # Operator/automation override: use exactly this block device. Must be
+    # a real block device and must not be the live root's disk.
+    [ -b "$DEPLOY_TARGET_DISK" ] || fatal "DEPLOY_TARGET_DISK '$DEPLOY_TARGET_DISK' is not a block device"
     livedev=$(findmnt -nro SOURCE / 2>/dev/null | sed 's/[0-9]*$//;s|/dev/||' || true)
-    [ -n "$livedev" ] && [ "$name" = "$livedev" ] && continue
-    if [ "$size" -gt "$DISK_SIZE" ]; then
-        DISK=/dev/$name
-        DISK_SIZE=$size
-    fi
-done
+    [ -n "$livedev" ] && [ "$DEPLOY_TARGET_DISK" = "/dev/$livedev" ] && \
+        fatal "DEPLOY_TARGET_DISK '$DEPLOY_TARGET_DISK' is the live root disk; refusing"
+    DISK=$DEPLOY_TARGET_DISK
+else
+    DISK=
+    DISK_SIZE=0
+    for line in $(lsblk -dbrno NAME,SIZE,TYPE,RM | awk '$3=="disk" && $4=="0" {print $1":"$2}'); do
+        name=${line%%:*}
+        size=${line##*:}
+        livedev=$(findmnt -nro SOURCE / 2>/dev/null | sed 's/[0-9]*$//;s|/dev/||' || true)
+        [ -n "$livedev" ] && [ "$name" = "$livedev" ] && continue
+        if [ "$size" -gt "$DISK_SIZE" ]; then
+            DISK=/dev/$name
+            DISK_SIZE=$size
+        fi
+    done
+fi
 [ -n "$DISK" ] || fatal "no target disk found"
 report imaging "partitioning $DISK (DESTRUCTIVE)"
 
