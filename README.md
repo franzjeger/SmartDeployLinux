@@ -74,11 +74,14 @@ miss:
   compose up -d` silently leaves out the auth-broker (needed to issue
   deployment codes) and the LAN-PXE listener.
 
-Leaving `OIDC_ISSUER` / `OIDC_CLIENT_ID` empty starts the api with **no
-authentication at all** — it logs `OIDC verifier unavailable; public API
-will be open` and serves `/api/v1/*` to anyone who can reach the port.
-That is fine for a lab on a trusted network; configure OIDC before the
-server holds anything you care about.
+Security downgrades are **fail-closed**: the api refuses to start if it
+would end up unprotected. Leaving `OIDC_ISSUER` / `OIDC_CLIENT_ID` empty
+(an unauthenticated `/api/v1/*`) or omitting the internal mTLS cert
+(`/internal/*` in plaintext) is a startup **error**, not a silent
+downgrade. For a lab on a trusted network you can opt into each downgrade
+deliberately with `ALLOW_OPEN_API=1` and/or `ALLOW_PLAINTEXT_INTERNAL=1`
+— the api then logs a loud warning on every boot. Never set these in
+production; configure OIDC and run `make secrets` instead.
 
 Then:
 

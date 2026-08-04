@@ -86,6 +86,7 @@ start_api() {
     API_LISTEN="127.0.0.1:$port" API_PUBLIC_URL="$API_BASE" \
     DEPLOY_FQDN="$DEPLOY_FQDN" LOG_LEVEL=warn \
     OIDC_ISSUER= OIDC_CLIENT_ID= INTERNAL_TLS_CERT=/nonexistent \
+    ALLOW_OPEN_API=1 ALLOW_PLAINTEXT_INTERNAL=1 \
         "$API_BIN" serve >"$WORK/api.log" 2>&1 &
     API_PID=$!
 

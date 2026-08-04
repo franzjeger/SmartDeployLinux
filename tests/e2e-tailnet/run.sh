@@ -168,6 +168,7 @@ start_api_and_archive(){
   API_LISTEN="0.0.0.0:$API_PORT" API_PUBLIC_URL="$API_BASE_TAILNET" \
   DEPLOY_FQDN="$DEPLOY_FQDN" LOG_LEVEL=warn \
   OIDC_ISSUER= OIDC_CLIENT_ID= INTERNAL_TLS_CERT=/nonexistent \
+  ALLOW_OPEN_API=1 ALLOW_PLAINTEXT_INTERNAL=1 \
       "$API_BIN" serve >"$WORK/api-tailnet.log" 2>&1 &
   API_PID=$!
   for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$API_PORT/readyz" >/dev/null 2>&1 && break; sleep 0.2; done

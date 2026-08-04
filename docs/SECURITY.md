@@ -72,8 +72,10 @@ ID tokens are short-lived.
   Creation and revocation are audited (`api_token.created` / `.revoked`).
 - **Transport.** Presented as `Authorization: Bearer dpsk_…`. The auth
   middleware routes the `dpsk_` prefix to DB verification instead of OIDC.
-  API tokens require an OIDC-configured deployment — with OIDC unset the
-  operator API is open (dev mode) and no bearer is consulted.
+  API tokens require an OIDC-configured deployment. Running with OIDC
+  unset (an open operator API) is **fail-closed**: the api refuses to
+  start unless `ALLOW_OPEN_API=1` is set explicitly for a dev/lab
+  environment (see §4 #8).
 - **Rotation.** Prefer a short `--expires-in-days`; to rotate, create a
   new token, cut clients over, then revoke the old one. Revocation takes
   effect immediately (the next request 401s).
@@ -118,7 +120,11 @@ Real punch list, not aspirational. ✅ closed in Phase 9; ⏳ open.
    (`api/internal/mtls`, `http-boot/internal/mtls`) with the loader and
    server/client tls.Config helpers; api ships 3 tests including a
    real-handshake round-trip with negative cases (no-cert and
-   foreign-CA both rejected at handshake). The public `/api/v1/*`
+   foreign-CA both rejected at handshake). This is **fail-closed**: if
+   `INTERNAL_TLS_CERT` is absent the api refuses to start rather than
+   silently serving `/internal/*` in plaintext on the public listener —
+   the plaintext fallback requires an explicit `ALLOW_PLAINTEXT_INTERNAL=1`
+   opt-in for dev/lab. The public `/api/v1/*`
    surface stays on `:8080` behind Caddy + OIDC because operator and
    installer-phone-home callers can't present internal-CA certs. mTLS
    for api↔auth-broker and api↔worker is the obvious next-extension —
