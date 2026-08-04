@@ -51,10 +51,16 @@ Long-lived API tokens let headless clients (SDKs, `deployctl`, CI,
 automation) authenticate without the interactive OIDC device flow, whose
 ID tokens are short-lived.
 
-- **Scope.** A token authenticates **as** its owning user and carries
-  exactly that user's roles/permissions. It cannot grant more than the
-  owner already has, so self-service issuance (`apitoken.write`, seeded to
-  the operator role) is safe.
+- **Scope.** A token authenticates **as** its owning user. By default it
+  carries that user's full permissions; optionally it can be **scoped to a
+  subset of the owner's roles** (`roles` on create — least privilege). A
+  scoped token's effective permissions are computed at verification time
+  as the owner's permissions held *through those named roles*, so it
+  cannot exceed the owner and it shrinks automatically if the owner later
+  loses a scoped role. Scoping to a role you do not hold is rejected
+  (400). Either way a token can never grant more than the owner has, so
+  self-service issuance (`apitoken.write`, seeded to the operator role) is
+  safe.
 - **Storage.** Only a peppered SHA-256 hash is stored
   (`tokens.HashAPIToken`, domain-separated from boot tokens via a distinct
   digest tag; pepper = the deploy FQDN, as for boot tokens). The plaintext

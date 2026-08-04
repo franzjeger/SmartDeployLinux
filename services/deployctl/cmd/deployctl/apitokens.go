@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	sdk "github.com/your-org/deployserver/sdk"
 )
@@ -33,6 +34,7 @@ func apiTokensCreate(args []string) {
 	fs := flag.NewFlagSet("api-tokens create", flag.ExitOnError)
 	name := fs.String("name", "", "label for the token (required)")
 	days := fs.Int("expires-in-days", 0, "expiry in days (0 = never expires)")
+	roles := fs.String("roles", "", "comma-separated roles to scope the token to (must be a subset of your own; default: full access)")
 	parseFlags(args, fs)
 	if *name == "" {
 		fmt.Fprintln(os.Stderr, "api-tokens create: --name required")
@@ -45,6 +47,11 @@ func apiTokensCreate(args []string) {
 	in := sdk.CreateAPITokenInput{Name: *name}
 	if *days > 0 {
 		in.ExpiresInDays = days
+	}
+	for _, r := range strings.Split(*roles, ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			in.Roles = append(in.Roles, r)
+		}
 	}
 	out, err := c.CreateAPIToken(context.Background(), in)
 	if err != nil {

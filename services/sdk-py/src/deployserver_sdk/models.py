@@ -373,12 +373,16 @@ class APIToken(TypedDict):
     expires_at: str | None
     last_used_at: str | None
     revoked_at: str | None
+    #: Roles the token is limited to. Empty = the owner's full permissions.
+    scope_roles: list[str]
 
 
 class CreateAPITokenInput(TypedDict):
     name: str
     #: Omit for a non-expiring token.
     expires_in_days: NotRequired[int]
+    #: Restrict the token to a subset of your own roles. Omit for full perms.
+    roles: NotRequired[list[str]]
 
 
 class CreatedAPIToken(APIToken):

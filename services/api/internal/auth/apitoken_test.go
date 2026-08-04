@@ -14,16 +14,27 @@ import (
 // fakeAPITokenStore is an in-memory APITokenStore for the middleware test.
 type fakeAPITokenStore struct {
 	byHash map[string]uuid.UUID
+	scope  map[string][]string // hash -> token role scope
 	perms  map[uuid.UUID][]string
+	// permsByRole models what each role grants (for the scoped path).
+	permsByRole map[string][]string
 }
 
-func (f *fakeAPITokenStore) AuthenticateAPIToken(_ context.Context, hash string) (uuid.UUID, bool, error) {
+func (f *fakeAPITokenStore) AuthenticateAPIToken(_ context.Context, hash string) (uuid.UUID, []string, bool, error) {
 	uid, ok := f.byHash[hash]
-	return uid, ok, nil
+	return uid, f.scope[hash], ok, nil
 }
 
 func (f *fakeAPITokenStore) LoadUserPermissions(_ context.Context, userID uuid.UUID) ([]string, error) {
 	return f.perms[userID], nil
+}
+
+func (f *fakeAPITokenStore) LoadUserPermissionsScoped(_ context.Context, _ uuid.UUID, roleNames []string) ([]string, error) {
+	var out []string
+	for _, r := range roleNames {
+		out = append(out, f.permsByRole[r]...)
+	}
+	return out, nil
 }
 
 func TestAPITokenMiddleware(t *testing.T) {
@@ -80,6 +91,44 @@ func TestAPITokenMiddleware(t *testing.T) {
 	// Missing bearer → 401.
 	if rec := do(""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("no bearer: got %d, want 401", rec.Code)
+	}
+}
+
+// A role-scoped token carries only the scoped roles' permissions, even
+// when the owner has broader access (here the wildcard "*").
+func TestAPITokenMiddleware_Scoped(t *testing.T) {
+	uid := uuid.New()
+	pepper := []byte("p")
+	secret := tokens.APITokenPrefix + "scoped"
+	hash := tokens.HashAPIToken(secret, pepper)
+	fake := &fakeAPITokenStore{
+		byHash:      map[string]uuid.UUID{hash: uid},
+		scope:       map[string][]string{hash: {"operator"}},
+		perms:       map[uuid.UUID][]string{uid: {"*"}}, // owner is admin
+		permsByRole: map[string][]string{"operator": {"machine.read"}},
+	}
+	SetAPITokenAuthenticator(NewAPITokenAuthenticator(fake, pepper))
+	t.Cleanup(func() { SetAPITokenAuthenticator(nil) })
+
+	var wildcard, scoped bool
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wildcard = HasPerm(r.Context(), "anything.at.all") // true only if "*" leaked
+		scoped = HasPerm(r.Context(), "machine.read")
+		w.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/machines", nil)
+	req.Header.Set("Authorization", "Bearer "+secret)
+	rec := httptest.NewRecorder()
+	Middleware(nil)(next).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d", rec.Code)
+	}
+	if !scoped {
+		t.Fatal("scoped token is missing the operator role's machine.read")
+	}
+	if wildcard {
+		t.Fatal("scoped token leaked the owner's '*' — scoping failed")
 	}
 }
 

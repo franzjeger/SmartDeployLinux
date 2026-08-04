@@ -358,12 +358,16 @@ export interface APIToken {
   expires_at: string | null;
   last_used_at: string | null;
   revoked_at: string | null;
+  /** Roles the token is limited to. Empty = the owner's full permissions. */
+  scope_roles: string[];
 }
 
 export interface CreateAPITokenInput {
   name: string;
   /** Omit for a non-expiring token. */
   expires_in_days?: number;
+  /** Restrict the token to a subset of your own roles. Omit for full permissions. */
+  roles?: string[];
 }
 
 /** Create response: the stored record plus the one-time plaintext secret. */

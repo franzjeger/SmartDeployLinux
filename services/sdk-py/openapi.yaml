@@ -721,6 +721,13 @@ paths:
               properties:
                 name: { type: string, description: "Human label, e.g. 'ci-runner'" }
                 expires_in_days: { type: integer, minimum: 1, description: "Omit for a non-expiring token" }
+                roles:
+                  type: array
+                  items: { type: string }
+                  description: >
+                    Optional. Restrict the token to these roles (must be a
+                    subset of your own). Omit or empty = your full
+                    permissions. A role you do not hold is a 400.
       responses:
         "201":
           description: Created — carries the one-time secret
@@ -778,6 +785,10 @@ components:
         expires_at: { type: [string, "null"], format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
         revoked_at: { type: [string, "null"], format: date-time }
+        scope_roles:
+          type: array
+          items: { type: string }
+          description: Roles the token is limited to. Empty = the owner's full permissions.
     CreatedAPIToken:
       allOf:
         - $ref: "#/components/schemas/APIToken"

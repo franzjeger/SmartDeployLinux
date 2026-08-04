@@ -895,6 +895,38 @@ the short-lived-ID-token gap called out when the SDKs shipped.
 - Verified by rendering the panel and both modals in headless Chromium
   against a mock of the three endpoints (list, create, empty state).
 
+## Phase 33 — Token role-scoping
+
+**Done.**
+
+Optional least-privilege scoping for API tokens: a token can be limited to
+a subset of the owner's roles instead of carrying the owner's full
+permissions.
+
+- Migration `0013`: `api_tokens.scope_roles text[]` (default `{}` =
+  unscoped; every existing token keeps full-owner behavior).
+- **Effective permissions** of a scoped token = the owner's permissions
+  held *through the named roles*, computed at verification time
+  (`LoadUserPermissionsScoped`). So a scoped token can never exceed the
+  owner, and it shrinks automatically if the owner later loses a scoped
+  role. `AuthenticateAPIToken` now returns the scope; the authenticator
+  picks the full or scoped permission loader.
+- **Create** accepts optional `roles[]`, validated as a subset of the
+  owner's roles (a role you don't hold → 400); the invariant that keeps a
+  token from ever escalating. No new operations — the surface stays 57.
+- **Clients:** `roles` added to `CreateAPITokenInput` and `scope_roles` to
+  `APIToken` across all three SDKs (models only; sync/parity gates green).
+  `deployctl api-tokens create --roles a,b`. The UI create modal gains a
+  role picker (checkboxes from `/roles`, best-effort) and the token list
+  shows a **Scope** column (role chips, or "full access").
+- **Tested:** store scoping (scoped perms exclude the owner's `*`, scope
+  round-trips create→authenticate); middleware unit (a scoped token does
+  not leak the owner's `*`); HTTP e2e (scope-to-unheld-role → 400,
+  scope-to-held-role echoes `scope_roles`). Contract test green at 57;
+  verified against local Postgres 16. UI verified in headless Chromium
+  (scope column + inline role checkboxes).
+- Docs: `docs/SECURITY.md` §"API tokens" scope bullet updated.
+
 ## Phase 11 — Final docs
 **Done.**
 
