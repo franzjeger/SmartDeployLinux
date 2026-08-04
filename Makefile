@@ -86,6 +86,9 @@ collections: ## Regenerate the Postman + Bruno client collections from the OpenA
 test-e2e: ## Run the deploy-spine e2e smoke test (needs DEPLOY_TEST_PG_DSN).
 	cd tests/e2e && go test ./... -count=1 -v
 
+test-e2e-kvm: ## Full deploy proof: real restore.sh → real disk → QEMU boot (root; needs PG_DSN + golden image).
+	cd tests/e2e-kvm && ./run.sh
+
 # --- security --------------------------------------------------------------
 
 sec-scan: ## govulncheck (blocking) + gosec high-severity (advisory), per module.
@@ -104,4 +107,4 @@ clean:
 	$(MAKE) -C ipxe clean
 
 .PHONY: help secrets build build-images build-bootstrap build-ipxe up down logs \
-        seed-admin migrate test test-unit test-e2e sec-scan clean
+        seed-admin migrate test test-unit test-e2e test-e2e-kvm sec-scan clean

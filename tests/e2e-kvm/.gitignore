@@ -1,0 +1,8 @@
+# Run artifacts (golden image, target disk, logs, serial capture) — the
+# harness writes these under $WORK (default /var/tmp/e2ekvm), but ignore
+# them here too in case someone points WORK at this directory.
+*.tar.zst
+*.raw
+*.qcow2
+*.log
+*.fetched.sh

@@ -133,9 +133,13 @@ SDK).
 
 **v1.0.0.** All designed phases (1–25) are implemented and tested —
 ~95 unit/integration tests plus an 8-scenario end-to-end harness run
-against a real Postgres in CI. See `CHANGELOG.md` for the release
-summary, `docs/STATUS.md` for the phase-by-phase record, and
-`docs/FIELD_TEST.md` for the hardware validation protocol (the flows
+against a real Postgres in CI. The deploy **core** is additionally proven
+from the server all the way to a booted OS: `tests/e2e-kvm/` restores a
+real golden image with the project's own `restore.sh` onto a real disk and
+boots the result in QEMU, driven by the live api over the real token flow
+(`make test-e2e-kvm`; see `tests/e2e-kvm/README.md`). See `CHANGELOG.md`
+for the release summary, `docs/STATUS.md` for the phase-by-phase record,
+and `docs/FIELD_TEST.md` for the hardware validation protocol (the flows
 that need real firmware, a live Headscale, or the Windows ADK).
 
 ## License

@@ -978,6 +978,51 @@ it inherits the same spec-synced source of truth.
 - CI build/vet/test loop + `make test-unit` extended to the provider
   module; `examples/main.tf`, provider README, top-level README.
 
+## Phase 36 — end-to-end deploy proof (server → restore → booted OS)
+
+**Done.**
+
+The first proof that the deploy **core** works from the server all the way
+to a booted OS, with nothing stubbed on the critical path — the gap
+`STATUS`/`FIELD_TEST` had always flagged (the pipeline was tested per-unit
+but never driven end to end against a real disk that actually boots).
+
+`tests/e2e-kvm/` — a repeatable harness (`build-golden.sh` + `run.sh`):
+
+1. builds a real, minimal-but-bootable Ubuntu **golden archive**
+   (real kernel, GRUB, initramfs) captured as `.tar.zst`, as `capture.sh`
+   would produce;
+2. starts the **real `api`** against a real Postgres, registers a golden
+   image/profile/machine over the operator API, and seeds the boot token +
+   deploy job as the auth-broker's redeem would;
+3. fetches the **token-gated `restore.sh` from the api** (and confirms it's
+   refused without the token);
+4. runs that exact script against a **real loop-backed block device**:
+   real GPT (sgdisk), real ext4/ESP, real stream-untar, real
+   `grub-install` + `update-initramfs` in a chroot, real identity regen
+   (hostname, machine-id, SSH host keys, by-UUID fstab), and its own
+   phone-home;
+5. asserts the api job reaches **`completed`**, driven by the script;
+6. **boots the restored disk in QEMU** and matches, on the serial console,
+   `DEPLOY-E2E-BOOT-OK host=restored-e2e machine-id=… root=/dev/vda2` — the
+   OS booting from `root=UUID=…` and resolving it to a **different device
+   node** (`vda2`) than restore ever saw (`loop0p2`): the
+   hardware-independence promise, shown rather than asserted.
+
+- **New product capability along the way:** `restore.sh` now honours
+  `DEPLOY_TARGET_DISK` to force the target block device (with block-device
+  and live-root guards) — a real operator need when the biggest disk isn't
+  the OS disk, and what lets the harness drive a specific loop device
+  safely. Kept byte-identical between the embedded copy and
+  `linux/scripts/restore.sh` (the sync test enforces it).
+- **Honest scope:** QEMU runs under **TCG** (the CI/sandbox host has no
+  `/dev/kvm`; add `-enable-kvm` on real hardware — nothing else changes),
+  a tiny `blkid` shim stands in for `udevd`'s `/dev/disk/by-uuid`
+  population, and the archive is served over local HTTP instead of S3.
+  Everything on the deploy critical path is real. See
+  `tests/e2e-kvm/README.md`.
+- `make test-e2e-kvm`.
+
 ## Phase 11 — Final docs
 **Done.**
 
