@@ -6,7 +6,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 # Pinned tool versions. CI fails if these drift.
-GO_VERSION             ?= 1.23.4
+GO_VERSION             ?= 1.25.12
 NODE_VERSION           ?= 22.11.0
 BUILDROOT_VERSION      ?= 2025.02
 IPXE_REF               ?= v1.21.1

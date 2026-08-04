@@ -5,7 +5,7 @@
 // dependency-free.
 module github.com/your-org/deployserver/sdk/spectest
 
-go 1.23.4
+go 1.25.12
 
 require (
 	github.com/your-org/deployserver/sdk v0.0.0

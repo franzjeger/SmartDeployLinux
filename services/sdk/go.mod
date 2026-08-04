@@ -7,4 +7,4 @@
 // code that imports this package.
 module github.com/your-org/deployserver/sdk
 
-go 1.23.4
+go 1.25.12
