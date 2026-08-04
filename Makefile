@@ -89,6 +89,9 @@ test-e2e: ## Run the deploy-spine e2e smoke test (needs DEPLOY_TEST_PG_DSN).
 test-e2e-kvm: ## Full deploy proof: real restore.sh → real disk → QEMU boot (root; needs PG_DSN + golden image).
 	cd tests/e2e-kvm && ./run.sh
 
+test-e2e-tailnet: ## Advertised-path proof: real Headscale + Tailscale, deploy over the overlay (root; run ./setup.sh first).
+	cd tests/e2e-tailnet && ./run.sh
+
 # --- security --------------------------------------------------------------
 
 sec-scan: ## govulncheck (blocking) + gosec high-severity (advisory), per module.
@@ -107,4 +110,4 @@ clean:
 	$(MAKE) -C ipxe clean
 
 .PHONY: help secrets build build-images build-bootstrap build-ipxe up down logs \
-        seed-admin migrate test test-unit test-e2e test-e2e-kvm sec-scan clean
+        seed-admin migrate test test-unit test-e2e test-e2e-kvm test-e2e-tailnet sec-scan clean

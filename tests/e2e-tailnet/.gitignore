@@ -1,0 +1,8 @@
+# Run artifacts live under $WORK (default /var/tmp/e2ekvm), but ignore any
+# that land here if WORK is pointed at this directory.
+*.raw
+*.log
+*.out
+*.sh.fetched
+deploy.cmd
+restore.tailnet.sh
