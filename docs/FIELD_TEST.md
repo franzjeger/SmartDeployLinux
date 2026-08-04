@@ -28,6 +28,57 @@ SeaBIOS for legacy); FT-3's USB boot and FT-9c's WoL want real iron.
 
 ---
 
+## What's already de-risked in software — and what still gates `v1.0.0`
+
+The repo ships two automated harnesses that exercise parts of this
+protocol in software (emulation + a real overlay), so a bench run starts
+from a known-good baseline instead of cold:
+
+- **`tests/e2e-kvm`** covers the **restore→boot mechanics** behind FT-5b:
+  the project's real `restore.sh` onto a real block device (GPT, ext4,
+  GRUB, initramfs, identity regen), then a QEMU boot of the result. It
+  does **not** replace real firmware, and does not cover capture
+  (FT-5a / FT-7).
+- **`tests/e2e-tailnet`** covers the **control plane + transport** behind
+  FT-2/FT-3/FT-4 and the *server side* of FT-6: a real Headscale
+  preauth-key mint, a real `tailscaled` join, the deploy reaching the api
+  **only over WireGuard**, and the full Windows WinPE artifact chain
+  (`deploy.cmd`, DMI+PCI driver match, `unattend.xml`, image/driver
+  handoffs).
+
+These prove the *software* path; they do **not** substitute for the
+physical sign-off. The items below are the ones only real hardware, the
+Windows ADK, or a real network can close — and clearing this checklist on
+real machines is exactly what promotes **`v1.0.0-rc` → `v1.0.0`**:
+
+- [ ] **Real USB firmware boot (FT-3)** — a physical stick booting on real
+      UEFI *and* legacy-BIOS firmware. The one flow no VM covers.
+- [ ] **Real-disk deploy on real iron (FT-4, FT-5b/c)** — zero-touch Linux
+      deploy and golden restore (UEFI+plain and BIOS+LVM) on wipeable
+      physical disks, checking regenerated identity against the source.
+- [ ] **WinPE→DISM on the Windows ADK (FT-6, FT-7)** — a real `boot.wim`
+      built on the ADK, booted on a target, applying the WIM + injected
+      drivers, through sysprep capture and cross-model redeploy. The
+      SmartDeploy headline claim — still unbooted.
+- [ ] **A genuine cross-network run** — a deploy where the stick and the
+      server are on **two different physical networks** (real internet +
+      NAT), not one host. `tests/e2e-tailnet` proves coordination and
+      WireGuard transport on a single host; this proves it end to end
+      across the internet.
+- [ ] **LAN PXE + edge agent on real L2 (FT-8, FT-9)** — proxyDHCP/TFTP
+      menu, the site image-mirror cache, and wake-on-LAN against real
+      machines.
+- [ ] **Operational resilience (no FT yet — write one)** — a rehearsal of
+      the HA tier (3 nodes + external Postgres + S3), a backup/restore
+      drill, an in-place upgrade with rollback, and a basic load/failover
+      test. These are validated by config today but have never been run.
+
+Until this checklist is green on real machines, treat the product as a
+**release candidate**: software-complete and software-proven,
+hardware-unverified.
+
+---
+
 ## FT-1 — Server bring-up
 
 *Prereqs: DNS for `DEPLOY_FQDN` pointing at the host; TLS cert for it
