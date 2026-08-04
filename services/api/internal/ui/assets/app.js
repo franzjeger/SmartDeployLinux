@@ -2760,7 +2760,7 @@ route("/api-tokens", async () => {
       ${tokens.length ? `
         <div class="table-wrap"><table>
           <thead><tr>
-            <th>Name</th><th>Prefix</th><th>Status</th><th>Created</th><th>Expires</th><th>Last used</th><th></th>
+            <th>Name</th><th>Prefix</th><th>Status</th><th>Scope</th><th>Created</th><th>Expires</th><th>Last used</th><th></th>
           </tr></thead>
           <tbody>
           ${tokens.map(t => { const s = status(t); return `
@@ -2768,6 +2768,9 @@ route("/api-tokens", async () => {
               <td><strong>${escapeHTML(t.name)}</strong></td>
               <td class="mono small">${escapeHTML(t.prefix)}…</td>
               <td><span class="badge ${s.c}"><span class="dot"></span>${s.l}</span></td>
+              <td>${(t.scope_roles && t.scope_roles.length)
+                ? t.scope_roles.map(r => `<span class="chip">${escapeHTML(r)}</span>`).join(" ")
+                : `<span class="muted small">full access</span>`}</td>
               <td class="muted small">${fmtTime(t.created_at)}</td>
               <td class="muted small">${t.expires_at ? fmtAbsolute(t.expires_at) : "never"}</td>
               <td class="muted small">${t.last_used_at ? fmtTime(t.last_used_at) : "—"}</td>
@@ -2799,7 +2802,24 @@ route("/api-tokens", async () => {
   }));
 });
 
-function openCreateTokenModal() {
+async function openCreateTokenModal() {
+  // Offer role-scoping when the caller can see the role list. Best-effort:
+  // if /roles is forbidden the token is simply unscoped (full permissions),
+  // and the server still enforces the subset rule on whatever is sent.
+  const roles = await api("GET", "/api/v1/roles").catch(() => []);
+  const scopeBlock = roles.length ? `
+    <div class="row"><div class="full">
+      <div style="margin-bottom:8px;">Scope to roles <span class="muted small">(optional — least privilege)</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px 20px;">
+        ${roles.map(r => `
+          <label style="display:inline-flex;flex-direction:row;align-items:center;gap:7px;min-width:0;cursor:pointer;font-weight:normal;color:var(--text);margin:0;">
+            <input type="checkbox" name="role" value="${escapeHTML(r.name)}" style="width:auto;margin:0;padding:0;flex:none;accent-color:var(--accent);">${escapeHTML(r.name)}
+          </label>`).join("")}
+      </div>
+    </div></div>
+    <p class="small muted">Leave all unchecked for your full permissions. You can only scope to roles you hold.</p>
+  ` : "";
+
   openModal({
     title: "New API token",
     body: `
@@ -2810,18 +2830,22 @@ function openCreateTokenModal() {
         <div class="row"><label class="full">Expires in (days)
           <input name="days" type="number" min="1" placeholder="leave blank for no expiry" autocomplete="off">
         </label></div>
-        <p class="small muted">The token authenticates as you and carries your current permissions.
-        Prefer a short expiry for automation you can re-issue.</p>
+        ${scopeBlock}
+        <p class="small muted">The token authenticates as you. Prefer a short expiry and a narrow
+        scope for automation you can re-issue.</p>
       </form>`,
     primary: { label: "Create" },
     secondary: "Cancel",
     onPrimary: async modal => {
-      const fd = new FormData($("#token-form", modal));
+      const form = $("#token-form", modal);
+      const fd = new FormData(form);
       const name = String(fd.get("name") || "").trim();
       if (!name) { toast("Name is required", "err"); return false; }
       const body = { name };
       const days = parseInt(String(fd.get("days") || ""), 10);
       if (Number.isInteger(days) && days > 0) body.expires_in_days = days;
+      const chosen = fd.getAll("role").map(String).filter(Boolean);
+      if (chosen.length) body.roles = chosen;
       const created = await api("POST", "/api/v1/api-tokens", body);
       // Replace this modal with the one-time secret reveal. Returning false
       // keeps openModal from clearing the root we just repopulated.

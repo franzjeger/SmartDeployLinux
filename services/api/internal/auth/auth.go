@@ -146,24 +146,33 @@ func SetAPITokenAuthenticator(a APITokenAuthenticator) { apiTokenAuth = a }
 // APITokenStore is the slice of the store the API-token authenticator
 // needs. *store.Store satisfies it.
 type APITokenStore interface {
-	AuthenticateAPIToken(ctx context.Context, hash string) (uuid.UUID, bool, error)
+	// AuthenticateAPIToken returns the owner and the token's role scope
+	// (empty = unscoped) for a live token.
+	AuthenticateAPIToken(ctx context.Context, hash string) (uuid.UUID, []string, bool, error)
 	LoadUserPermissions(ctx context.Context, userID uuid.UUID) ([]string, error)
+	LoadUserPermissionsScoped(ctx context.Context, userID uuid.UUID, roleNames []string) ([]string, error)
 }
 
 // NewAPITokenAuthenticator builds an authenticator over the given store,
 // hashing presented tokens with pepper (which must equal the pepper the
 // create handler used — the deploy FQDN). A token authenticates as its
-// owning user, carrying exactly that user's permissions.
+// owning user; an unscoped token carries the owner's full permissions, a
+// role-scoped token only the permissions the owner holds via those roles.
 func NewAPITokenAuthenticator(ts APITokenStore, pepper []byte) APITokenAuthenticator {
 	return func(ctx context.Context, presented string) (*principal, error) {
-		uid, ok, err := ts.AuthenticateAPIToken(ctx, tokens.HashAPIToken(presented, pepper))
+		uid, scope, ok, err := ts.AuthenticateAPIToken(ctx, tokens.HashAPIToken(presented, pepper))
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
 			return nil, errors.New("unknown, revoked, or expired api token")
 		}
-		perms, err := ts.LoadUserPermissions(ctx, uid)
+		var perms []string
+		if len(scope) == 0 {
+			perms, err = ts.LoadUserPermissions(ctx, uid)
+		} else {
+			perms, err = ts.LoadUserPermissionsScoped(ctx, uid, scope)
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -369,12 +369,18 @@ type APIToken struct {
 	ExpiresAt  *time.Time `json:"expires_at"`
 	LastUsedAt *time.Time `json:"last_used_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
+	// ScopeRoles limits the token to these roles; empty = the owner's
+	// full permissions.
+	ScopeRoles []string `json:"scope_roles"`
 }
 
 type CreateAPITokenInput struct {
 	Name string `json:"name"`
 	// ExpiresInDays, when set, makes the token expire; omit for no expiry.
 	ExpiresInDays *int `json:"expires_in_days,omitempty"`
+	// Roles, when non-empty, restricts the token to a subset of your own
+	// roles (least privilege). Omit for the owner's full permissions.
+	Roles []string `json:"roles,omitempty"`
 }
 
 // CreatedAPIToken is the create response: the stored record plus the

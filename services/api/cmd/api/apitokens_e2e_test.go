@@ -119,6 +119,20 @@ func TestAPITokenHTTPRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected create body: %+v", created)
 	}
 
+	// 1b. Role-scoping: scoping to a role the owner lacks is rejected...
+	resp, body = call(http.MethodPost, "/api/v1/api-tokens", seed, `{"name":"bad","roles":["admin"]}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("scope to unheld role should 400, got %d: %s", resp.StatusCode, body)
+	}
+	// ...and scoping to a held role succeeds and is echoed back.
+	resp, body = call(http.MethodPost, "/api/v1/api-tokens", seed, `{"name":"scoped","roles":["operator"]}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("scoped create: got %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, `"scope_roles":["operator"]`) {
+		t.Fatalf("scope_roles not echoed in create response: %s", body)
+	}
+
 	// 2. The freshly minted token must itself authenticate (pepper match).
 	resp, body = call(http.MethodGet, "/api/v1/api-tokens", created.Token, "")
 	if resp.StatusCode != http.StatusOK {
