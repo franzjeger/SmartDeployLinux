@@ -714,6 +714,13 @@ closes the doc.
 deployctl images via a `VERSION` build arg (Dockerfiles + bake);
 `v1.0.0` tag + GitHub release.
 
+> **Correction (Phase 37).** The `v1.0.0` label overstated maturity: at
+> tag time nothing had been validated on real hardware. The version is now
+> described as **`v1.0.0-rc`** (feature-complete, software-validated by
+> `tests/e2e-kvm` + `tests/e2e-tailnet`) in the README and `CHANGELOG.md`.
+> Final `v1.0.0` is gated on the physical `docs/FIELD_TEST.md` sign-off
+> (real firmware boot, WinPE→DISM on the Windows ADK, a cross-network run).
+
 ## Phase 27 — OpenAPI contract + API reference
 
 **Done.**

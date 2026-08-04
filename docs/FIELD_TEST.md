@@ -28,6 +28,57 @@ SeaBIOS for legacy); FT-3's USB boot and FT-9c's WoL want real iron.
 
 ---
 
+## What's already de-risked in software — and what still gates `v1.0.0`
+
+The repo ships two automated harnesses that exercise parts of this
+protocol in software (emulation + a real overlay), so a bench run starts
+from a known-good baseline instead of cold:
+
+- **`tests/e2e-kvm`** covers the **restore→boot mechanics** behind FT-5b:
+  the project's real `restore.sh` onto a real block device (GPT, ext4,
+  GRUB, initramfs, identity regen), then a QEMU boot of the result. It
+  does **not** replace real firmware, and does not cover capture
+  (FT-5a / FT-7).
+- **`tests/e2e-tailnet`** covers the **control plane + transport** behind
+  FT-2/FT-3/FT-4 and the *server side* of FT-6: a real Headscale
+  preauth-key mint, a real `tailscaled` join, the deploy reaching the api
+  **only over WireGuard**, and the full Windows WinPE artifact chain
+  (`deploy.cmd`, DMI+PCI driver match, `unattend.xml`, image/driver
+  handoffs).
+
+These prove the *software* path; they do **not** substitute for the
+physical sign-off. The items below are the ones only real hardware, the
+Windows ADK, or a real network can close — and clearing this checklist on
+real machines is exactly what promotes **`v1.0.0-rc` → `v1.0.0`**:
+
+- [ ] **Real USB firmware boot (FT-3)** — a physical stick booting on real
+      UEFI *and* legacy-BIOS firmware. The one flow no VM covers.
+- [ ] **Real-disk deploy on real iron (FT-4, FT-5b/c)** — zero-touch Linux
+      deploy and golden restore (UEFI+plain and BIOS+LVM) on wipeable
+      physical disks, checking regenerated identity against the source.
+- [ ] **WinPE→DISM on the Windows ADK (FT-6, FT-7)** — a real `boot.wim`
+      built on the ADK, booted on a target, applying the WIM + injected
+      drivers, through sysprep capture and cross-model redeploy. The
+      SmartDeploy headline claim — still unbooted.
+- [ ] **A genuine cross-network run** — a deploy where the stick and the
+      server are on **two different physical networks** (real internet +
+      NAT), not one host. `tests/e2e-tailnet` proves coordination and
+      WireGuard transport on a single host; this proves it end to end
+      across the internet.
+- [ ] **LAN PXE + edge agent on real L2 (FT-8, FT-9)** — proxyDHCP/TFTP
+      menu, the site image-mirror cache, and wake-on-LAN against real
+      machines.
+- [ ] **Operational resilience (FT-12)** — a rehearsal of the HA tier
+      (2 api replicas + external Postgres + S3), a backup/restore drill, an
+      in-place upgrade with rollback, cross-replica failover, and a load/
+      soak test. Validated by config today but never run.
+
+Until this checklist is green on real machines, treat the product as a
+**release candidate**: software-complete and software-proven,
+hardware-unverified.
+
+---
+
 ## FT-1 — Server bring-up
 
 *Prereqs: DNS for `DEPLOY_FQDN` pointing at the host; TLS cert for it
@@ -251,6 +302,81 @@ Run these with FT-4's artifacts at hand:
 | Revoke the last admin's role | 409 |
 | grep caddy/nginx access logs for `token=` | no hits (bearer-only) |
 
+## FT-12 — Operational resilience (HA, backup, upgrade, failover, load)
+
+*The day-2 story the sandbox never rehearsed: the 3-node tier actually
+running, a backup you've restored, an upgrade you've rolled back, a
+replica you've killed under load. `docker-compose.ha.yml` validates as
+config in CI but has never been brought up. Do these on a staging stack
+that mirrors production (external Postgres + S3), not the single-host
+tier.*
+
+*Prereqs: a managed/external Postgres and an S3-compatible store reachable
+from the host; `.env` with `POSTGRES_*`, `S3_*`, `DEPLOY_FQDN`, `REGISTRY`,
+`TAG`. See `docs/OPERATIONS.md` and `docs/UPGRADING.md` for the canonical
+commands referenced below.*
+
+**a) HA bring-up.**
+`docker compose -f docker-compose.ha.yml up -d`.
+✅ The one-shot `api-migrate` runs to completion **before** the `api`
+replicas start (check its logs; concurrent replicas must never race the
+same migration); both `api` replicas report ready
+(`docker compose -f docker-compose.ha.yml ps` → 2× healthy); Caddy
+round-robins `/readyz` across them; `auth-broker`, `worker`, `http-boot`
+are up. Run one full FT-4 Linux deploy against the HA endpoint to prove
+the stack is live, not just healthy.
+🔍 `api-migrate` logs first, then per-replica `api` logs; a replica stuck
+unhealthy is nearly always a Postgres/S3 reachability or cert-path issue.
+
+**b) Cross-replica SSE + replica failover.**
+Open a live deploy's event stream in the UI (served by replica X). Mid-job,
+`docker compose -f docker-compose.ha.yml stop` **that** replica.
+✅ The stream keeps updating — phone-homes land on the surviving replica
+and ride Postgres `LISTEN/NOTIFY` to the open stream (the whole point of
+the pgbus event bus; the automated proof is `internal/pgbus`'
+`TestCrossInstanceDelivery`, exercised here across real containers). The
+in-flight job still reaches `completed`; no event is lost or duplicated.
+Restart the replica → it rejoins and serves traffic again.
+
+**c) Backup + restore drill.** *A backup you've never restored isn't a
+backup (OPERATIONS.md §1).*
+1. Take a dump: `pg_dump -Fc --no-owner` of the live DB; `mc mirror` the
+   blob bucket offsite.
+2. Restore into a **fresh, empty** database
+   (`pg_restore --clean --if-exists`) and point a throwaway api at it.
+✅ The restored api serves the same machines/images/jobs (spot-check a
+known job id and its event trail); blob URLs resolve against the mirrored
+bucket; `\dt` shows the full schema with `schema_migrations` intact.
+📸 Evidence: dump size + sha, restored `/api/v1/reports/summary` matching
+the source.
+
+**d) In-place upgrade with rollback (UPGRADING.md).**
+1. Note the running `TAG`. Bump to the new image `TAG`, re-run
+   `api-migrate`, then `up -d` the replicas (rolling: one at a time — the
+   other keeps serving).
+✅ Migrations apply forward cleanly; both replicas come back on the new
+tag with **no deploy downtime** (a `while curl /readyz` loop never drops);
+an in-flight deploy started before the upgrade still completes.
+2. **Roll back:** redeploy the previous `TAG`.
+✅ The app runs on the old image against the migrated schema (forward-only
+migrations must stay backward-compatible for one release — call out any
+that aren't). Document the exact rollback commands that worked.
+🔍 If a replica crash-loops after the bump, it's usually a migration the
+old image can't tolerate — capture it; that's a release-blocker.
+
+**e) Load / soak.** Drive concurrency the sandbox never did: e.g. 50
+simulated machines phoning home across many jobs
+(`hey`/`vegeta`/a shell loop against `/v1/jobs/<id>/events` and
+`/internal/render/by-token/...`) for ~15 min.
+✅ No 5xx in Caddy/api logs; `/metrics` shows p99 latency stable and the
+Postgres pool not exhausted (no `pool timeout`); memory flat (no leak
+over the soak); every job lands in a correct terminal state.
+📸 Evidence: the load tool's summary, a Grafana screenshot over the run.
+
+🔍 All of FT-12: this is where config-only validation stops paying off —
+capture logs and metrics generously. File any HA/upgrade/backup gap as a
+`field-test` issue **with** the compose/migration diff that reproduces it.
+
 ---
 
 ## Results record
@@ -270,6 +396,7 @@ Copy per test run:
 | FT-9a/b/c | | | ☐ pass ☐ fail | |
 | FT-10 | | | ☐ pass ☐ fail | |
 | FT-11 | | | ☐ pass ☐ fail | |
+| FT-12a/b/c/d/e | | | ☐ pass ☐ fail | |
 
 File findings as issues tagged `field-test`; anything that reproduces
 in the sandbox gets a regression test before the fix lands.

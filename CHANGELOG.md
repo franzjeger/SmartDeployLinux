@@ -1,10 +1,17 @@
 # Changelog
 
-## v1.0.0 — 2026-07-31
+## v1.0.0-rc — 2026-07-31
 
-First release. Phases 1–11 built the skeleton and design (see
+First release candidate. Phases 1–11 built the skeleton and design (see
 `docs/STATUS.md` for the phase-by-phase record); phases 12–25 turned it
-into a working product.
+into a working product, and later phases proved the deploy core and the
+tailnet transport in software (`tests/e2e-kvm`, `tests/e2e-tailnet`).
+
+This is a release **candidate**, not a final GA: the physical hardware
+sign-off in `docs/FIELD_TEST.md` — a real firmware boot of the USB stick,
+a WinPE→DISM boot on the Windows ADK, and a run across two real networks —
+is still outstanding. Clearing it on real machines promotes this to
+`v1.0.0`.
 
 ### Deploy pipeline (works end-to-end for the first time — Phase 12)
 - Fixed the token-hash mismatch, consuming phone-home tokens,

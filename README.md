@@ -131,21 +131,30 @@ SDK).
 
 ## Status
 
-**v1.0.0.** All designed phases (1–25) are implemented and tested —
+**v1.0.0-rc — feature-complete and software-validated; not yet
+hardware-signed-off.** All designed phases are implemented and tested:
 ~95 unit/integration tests plus an 8-scenario end-to-end harness run
-against a real Postgres in CI. The deploy **core** is additionally proven
-from the server all the way to a booted OS: `tests/e2e-kvm/` restores a
-real golden image with the project's own `restore.sh` onto a real disk and
-boots the result in QEMU, driven by the live api over the real token flow
-(`make test-e2e-kvm`; see `tests/e2e-kvm/README.md`). The advertised
-tailnet transport is proven too: `tests/e2e-tailnet/` stands up a **real
-Headscale + Tailscale**, has a client join with a single-use operator key,
-and runs the deploy — Linux (to a booted disk) and the server-side Windows
-WinPE/driver flow — reaching the api **only over WireGuard**
-(`make test-e2e-tailnet`; see `tests/e2e-tailnet/README.md`). See `CHANGELOG.md`
-for the release summary, `docs/STATUS.md` for the phase-by-phase record,
-and `docs/FIELD_TEST.md` for the hardware validation protocol (the flows
-that need real firmware, a live Headscale, or the Windows ADK).
+against a real Postgres in CI. Beyond that, the parts that used to be
+asserted are now demonstrated:
+
+- **Deploy core → a booted OS.** `tests/e2e-kvm/` restores a real golden
+  image with the project's own `restore.sh` onto a real disk and boots the
+  result in QEMU, driven by the live api over the real token flow
+  (`make test-e2e-kvm`).
+- **The tailnet transport.** `tests/e2e-tailnet/` stands up a **real
+  Headscale + Tailscale**, has a client join with a single-use operator
+  key, and runs the deploy — Linux (to a booted disk) and the server-side
+  Windows WinPE/driver flow — reaching the api **only over WireGuard**
+  (`make test-e2e-tailnet`).
+
+What that does **not** yet cover — and why this is a release candidate, not
+a final GA — is the physical hardware sign-off: a real UEFI/BIOS boot of
+the USB stick, a WinPE→DISM boot on the Windows ADK, and a run across two
+real networks (the emulated proofs above use QEMU/TCG, a single host, and
+served archives). Those are the open items; clearing
+[`docs/FIELD_TEST.md`](docs/FIELD_TEST.md) on real machines is what
+promotes this to `v1.0.0`. See `CHANGELOG.md` for the release-candidate
+summary and `docs/STATUS.md` for the phase-by-phase record.
 
 ## License
 
