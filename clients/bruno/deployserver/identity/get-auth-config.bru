@@ -1,0 +1,23 @@
+meta {
+  name: Pre-auth OIDC discovery
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/auth/config
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Public (pre-auth). The UI and CLI call this to learn the issuer and client id for the login flow, and whether the server runs in dev mode.
+}

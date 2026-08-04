@@ -927,6 +927,31 @@ permissions.
   (scope column + inline role checkboxes).
 - Docs: `docs/SECURITY.md` §"API tokens" scope bullet updated.
 
+## Phase 34 — Postman + Bruno collections
+
+**Done.**
+
+Ready-to-use API-client collections, generated from the OpenAPI spec the
+same way the SDKs are — kept in exact lockstep by tests.
+
+- **Generator** (`services/api/internal/collections` + a
+  `cmd/gen-collections` runner, `make collections`): reads the embedded
+  spec and emits, deterministically, a **Postman v2.1** collection +
+  environment and a **Bruno** collection (folder-per-tag, one `.bru` per
+  operation) under `clients/`. Resolves `$ref` parameters and request-body
+  schemas (incl. `allOf`, arrays, nested objects) into fillable example
+  bodies; collection-level bearer auth over `{{baseUrl}}` / `{{token}}`;
+  RBAC notes carried into request docs.
+- **Kept honest by tests** (`internal/collections`, run in the api suite):
+  operation **parity** (each collection is a bijection with the spec's 57
+  operations), **up-to-date** (committed files byte-identical to a fresh
+  generation, no orphans), plus structure + determinism checks.
+- **Validated with the real tools:** `newman run` (Postman) and `bru run`
+  (Bruno) both execute **57/57 requests, 0 failures** against a stub
+  server — the collections aren't just well-formed, they run.
+- `clients/README.md` (import + usage + regeneration); `make collections`;
+  top-level README + this entry.
+
 ## Phase 11 — Final docs
 **Done.**
 

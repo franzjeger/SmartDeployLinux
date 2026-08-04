@@ -1,0 +1,32 @@
+meta {
+  name: Update an image (name/description/media)
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/images/:id
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Requires `image.write`.
+}

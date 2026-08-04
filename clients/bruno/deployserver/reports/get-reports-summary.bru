@@ -1,0 +1,27 @@
+meta {
+  name: Deployment summary for a window
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reports/summary?since=7d
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  since: 7d
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `job.read`. `since` accepts 24h/7d/30d style values.
+}

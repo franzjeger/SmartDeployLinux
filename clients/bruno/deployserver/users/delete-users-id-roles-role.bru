@@ -1,0 +1,28 @@
+meta {
+  name: Revoke a role from a user
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/users/:id/roles/:role
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+  role: string
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `user.write`. Refused (409) if it would remove the last admin.
+}

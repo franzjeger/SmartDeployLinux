@@ -1,0 +1,32 @@
+meta {
+  name: Update a profile
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/profiles/:id
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {}
+}
+
+docs {
+  Requires `image.write`.
+}

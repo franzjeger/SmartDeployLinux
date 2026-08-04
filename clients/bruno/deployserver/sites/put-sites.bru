@@ -1,0 +1,32 @@
+meta {
+  name: Upsert a site (by name)
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{baseUrl}}/api/v1/sites
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "description": "<string>",
+    "mirror_base_url": "<string>",
+    "name": "<string>"
+  }
+}
+
+docs {
+  Requires `machine.write`.
+}

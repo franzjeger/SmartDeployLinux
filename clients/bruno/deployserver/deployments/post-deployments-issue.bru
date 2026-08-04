@@ -1,0 +1,37 @@
+meta {
+  name: Issue a deployment code
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/deployments/issue
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "binding_cidr": "<string>",
+    "capture_image_id": "<uuid>",
+    "capture_version_tag": "<string>",
+    "issued_for": "<string>",
+    "kind": "deploy",
+    "machine_id": "<uuid>",
+    "profile_id": "<uuid>",
+    "ttl_seconds": 0
+  }
+}
+
+docs {
+  Requires `deployment.create` (capture additionally needs `image.write`).
+}

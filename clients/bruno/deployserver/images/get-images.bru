@@ -1,0 +1,23 @@
+meta {
+  name: List images
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/images
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `image.read`.
+}

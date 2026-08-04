@@ -1,0 +1,36 @@
+meta {
+  name: Register a machine
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/machines
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "asset_tag": "<string>",
+    "attributes": {},
+    "default_profile_id": "<uuid>",
+    "mac_primary": "<string>",
+    "model": "<string>",
+    "uuid_smbios": "<uuid>",
+    "vendor": "<string>"
+  }
+}
+
+docs {
+  Requires `machine.write`.
+}

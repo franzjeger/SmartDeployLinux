@@ -1,0 +1,28 @@
+meta {
+  name: Query the audit log
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/audit
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  ~since: 
+  ~action: 
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `audit.read`.
+}

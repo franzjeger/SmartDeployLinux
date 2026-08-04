@@ -1,0 +1,35 @@
+meta {
+  name: Issue deployment codes for many machines
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/deployments/bulk
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "machine_ids": [
+      "<uuid>"
+    ],
+    "profile_id": "<uuid>",
+    "ttl_seconds": 0,
+    "wake": false
+  }
+}
+
+docs {
+  Requires `deployment.create`. Up to 100 machines; always 200 with per-machine results.
+}

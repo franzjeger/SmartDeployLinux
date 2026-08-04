@@ -1,0 +1,34 @@
+meta {
+  name: Create an API token
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/api-tokens
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "expires_in_days": 0,
+    "name": "<string>",
+    "roles": [
+      "<string>"
+    ]
+  }
+}
+
+docs {
+  Requires `apitoken.write` or `*`. Mints a long-lived bearer token that authenticates as the calling user (inheriting exactly that user's permissions). The plaintext secret is returned **once** in this response and never again.
+}

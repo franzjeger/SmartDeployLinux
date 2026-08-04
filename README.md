@@ -120,6 +120,10 @@ correspondence with the spec:
 - **Python** — [`services/sdk-py`](services/sdk-py/README.md). `TypedDict`
   models, `py.typed`, clean under `mypy --strict` and `pyright`.
 
+Ready-to-use **Postman** and **Bruno** collections (every operation,
+generated from the spec, kept in lockstep by a test) live in
+[`clients/`](clients/README.md).
+
 ## Status
 
 **v1.0.0.** All designed phases (1–25) are implemented and tested —

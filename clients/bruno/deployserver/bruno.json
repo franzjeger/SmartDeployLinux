@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "deployserver operator API",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

@@ -1,0 +1,27 @@
+meta {
+  name: Delete an image
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/images/:id
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `image.write`.
+}

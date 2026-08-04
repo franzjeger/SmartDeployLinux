@@ -1,0 +1,27 @@
+meta {
+  name: Get an image
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/images/:id
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `image.read`.
+}

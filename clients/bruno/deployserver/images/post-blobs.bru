@@ -1,0 +1,33 @@
+meta {
+  name: Register a blob and get a presigned upload URL
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/blobs
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "filename": "<string>",
+    "role": "images",
+    "sha256": "<string>",
+    "size_bytes": 0
+  }
+}
+
+docs {
+  Requires `image.write`. Upload the bytes to the returned URL (PUT), then link via image or driver-pack version.
+}

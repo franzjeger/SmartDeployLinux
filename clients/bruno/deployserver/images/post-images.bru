@@ -1,0 +1,42 @@
+meta {
+  name: Create an image
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/images
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "arch": "amd64",
+    "description": "<string>",
+    "media": {
+      "bootwim_url": "<string>",
+      "deploy_method": "golden",
+      "initrd_url": "<string>",
+      "kernel_url": "<string>",
+      "wim_url": "<string>",
+      "wimboot_url": "<string>"
+    },
+    "name": "<string>",
+    "os_family": "windows",
+    "os_version": "<string>"
+  }
+}
+
+docs {
+  Requires `image.write`.
+}

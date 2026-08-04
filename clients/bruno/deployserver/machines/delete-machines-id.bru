@@ -1,0 +1,27 @@
+meta {
+  name: Delete a machine
+  type: http
+  seq: 5
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/machines/:id
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `machine.write`.
+}

@@ -1,0 +1,35 @@
+meta {
+  name: Upsert an answer-file template
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/api/v1/profiles/:id/templates
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "body": "<string>",
+    "kind": "<string>"
+  }
+}
+
+docs {
+  Requires `image.write`. `kind` is one of autoinstall|kickstart|preseed|cloud-init|ignition|unattend.
+}

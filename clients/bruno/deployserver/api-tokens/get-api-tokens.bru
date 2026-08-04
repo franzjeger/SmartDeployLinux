@@ -1,0 +1,23 @@
+meta {
+  name: List your API tokens
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/api-tokens
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `apitoken.read` or `*`. Returns the caller's own tokens (the secret is never included; revoked and expired tokens are listed with their `revoked_at` / `expires_at` set).
+}

@@ -1,0 +1,29 @@
+meta {
+  name: List deployment jobs
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/jobs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  ~state: 
+  ~machine: 
+  ~limit: 
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `job.read`. Filter with `state`, `machine`, `limit`.
+}

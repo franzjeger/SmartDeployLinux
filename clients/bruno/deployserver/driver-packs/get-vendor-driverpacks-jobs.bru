@@ -1,0 +1,27 @@
+meta {
+  name: List vendor fetch jobs
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/vendor-driverpacks/jobs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  ~limit: 
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `driverpack.read`. Most recent first.
+}
