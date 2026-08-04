@@ -23,8 +23,8 @@ import (
 	"github.com/your-org/deployserver/api/internal/auditlog"
 	"github.com/your-org/deployserver/api/internal/auth"
 	"github.com/your-org/deployserver/api/internal/metrics"
-	"github.com/your-org/deployserver/api/internal/pgbus"
 	"github.com/your-org/deployserver/api/internal/mtls"
+	"github.com/your-org/deployserver/api/internal/pgbus"
 	"github.com/your-org/deployserver/api/internal/store"
 	"github.com/your-org/deployserver/api/internal/ui"
 )
@@ -174,8 +174,17 @@ func serve() {
 		os.Getenv("OIDC_CLIENT_ID"),
 	)
 	if err != nil {
-		// OIDC config is optional in dev; log and proceed unauthenticated.
-		slog.Warn("OIDC verifier unavailable; public API will be open", "err", err)
+		// Fail closed: without OIDC the public API is unauthenticated. Refuse
+		// to start unless an operator explicitly opts into open mode for a
+		// dev/lab environment. SECURITY.md §4 #8.
+		if !insecureOptIn("ALLOW_OPEN_API") {
+			slog.Error("OIDC is not configured, which would leave the public API unauthenticated. "+
+				"Refusing to start. Set OIDC_ISSUER and OIDC_CLIENT_ID, or set ALLOW_OPEN_API=1 "+
+				"to intentionally run an open API (dev/lab only).", "err", err)
+			os.Exit(2)
+		}
+		slog.Warn("ALLOW_OPEN_API is set: OIDC is unavailable and the public API is OPEN and "+
+			"UNAUTHENTICATED — dev/lab only, never production.", "err", err)
 	} else {
 		auth.SetUserResolver(auth.ResolverFromPool(st.Pool()))
 		// Long-lived API tokens are verified against the DB using the same
@@ -253,7 +262,7 @@ func serve() {
 
 	// Edge-agent wake queue. Shared-secret bearer (EDGE_WAKE_TOKEN);
 	// fails closed when unconfigured.
-	pub.With(middleware.Timeout(15 * time.Second)).
+	pub.With(middleware.Timeout(15*time.Second)).
 		Get("/v1/edge/wake-queue", h.edgeWakeQueue)
 
 	// Phone-home from in-OS installers (cross-WAN; bearer-token auth).
@@ -367,8 +376,19 @@ func serve() {
 		}
 		slog.Info("internal mTLS listener configured", "addr", internalListen)
 	} else {
+		// Fail closed: serving /internal/* in plaintext on the public listener
+		// exposes the render/boot surface without mTLS. Refuse unless the
+		// operator explicitly opts in for dev/lab. SECURITY.md §4 #3.
+		if !insecureOptIn("ALLOW_PLAINTEXT_INTERNAL") {
+			slog.Error("INTERNAL_TLS_CERT not present, which would serve /internal/* in plaintext on "+
+				"the public listener. Refusing to start. Run `make secrets` (or set INTERNAL_TLS_CERT/"+
+				"INTERNAL_TLS_KEY/INTERNAL_CA_CERT_PATH), or set ALLOW_PLAINTEXT_INTERNAL=1 to "+
+				"intentionally serve /internal in plaintext (dev/lab only).", "certPath", certPath)
+			os.Exit(2)
+		}
 		pub.Mount("/internal", intr)
-		slog.Warn("INTERNAL_TLS_CERT not present; /internal/* served plaintext on public listener (dev-mode)")
+		slog.Warn("ALLOW_PLAINTEXT_INTERNAL is set: /internal/* is served in PLAINTEXT on the public " +
+			"listener without mTLS — dev/lab only, never production.")
 	}
 
 	go func() {
@@ -478,6 +498,20 @@ func getenv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// insecureOptIn reports whether an explicit dev/lab escape-hatch flag is
+// set. Security downgrades — an unauthenticated public API, or /internal
+// served in plaintext — are fail-CLOSED by default: the server refuses to
+// start unless the operator deliberately turns the downgrade on. This
+// flips the old fail-open behaviour where a missing OIDC/mTLS config
+// silently removed the protection.
+func insecureOptIn(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func postgresDSN() string {

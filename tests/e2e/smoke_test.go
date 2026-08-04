@@ -100,8 +100,11 @@ func startAPI(t *testing.T) *harness {
 		"API_PUBLIC_URL=http://"+addr,
 		"DEPLOY_FQDN="+deployFQDN,
 		"LOG_LEVEL=warn",
-		// Force dev-mode paths: no OIDC, no internal mTLS certs.
+		// Force dev-mode paths: no OIDC, no internal mTLS certs. Both are
+		// fail-closed by default now, so this dev harness must opt in
+		// explicitly to the open-API + plaintext-internal escape hatches.
 		"OIDC_ISSUER=", "OIDC_CLIENT_ID=", "INTERNAL_TLS_CERT=/nonexistent",
+		"ALLOW_OPEN_API=1", "ALLOW_PLAINTEXT_INTERNAL=1",
 		"EDGE_WAKE_TOKEN="+edgeWakeToken,
 	)
 	cmd.Stdout = os.Stderr
