@@ -65,7 +65,7 @@ jobs:
           DEPLOY_TEST_PG_DSN: postgres://test:test@127.0.0.1:5432/test?sslmode=disable
         run: |
           set -euo pipefail
-          for svc in auth-broker api http-boot edge-agent worker deployctl sdk; do
+          for svc in auth-broker api http-boot edge-agent worker deployctl sdk terraform-provider-deployserver; do
             echo "::group::$svc"
             ( cd "services/$svc" &&
               go mod download &&

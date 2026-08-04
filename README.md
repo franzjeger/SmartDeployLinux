@@ -124,6 +124,11 @@ Ready-to-use **Postman** and **Bruno** collections (every operation,
 generated from the spec, kept in lockstep by a test) live in
 [`clients/`](clients/README.md).
 
+A **Terraform provider** —
+[`services/terraform-provider-deployserver`](services/terraform-provider-deployserver/README.md)
+— manages machines, sites, and API tokens declaratively (built on the Go
+SDK).
+
 ## Status
 
 **v1.0.0.** All designed phases (1–25) are implemented and tested —

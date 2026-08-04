@@ -952,6 +952,32 @@ same way the SDKs are — kept in exact lockstep by tests.
 - `clients/README.md` (import + usage + regeneration); `make collections`;
   top-level README + this entry.
 
+## Phase 35 — Terraform provider
+
+**Done.**
+
+A Terraform provider (`services/terraform-provider-deployserver`, on
+HashiCorp's `terraform-plugin-framework`) that manages deployserver
+resources declaratively. It's a thin, typed layer over the **Go SDK**, so
+it inherits the same spec-synced source of truth.
+
+- **Resources:** `deployserver_machine` (full CRUD + import),
+  `deployserver_site` (upsert/read/delete + import), `deployserver_api_token`
+  (create/read/delete; immutable — inputs force replacement, and the
+  once-only secret is a **sensitive** computed attribute, with optional
+  `roles` scoping). **Data source:** `deployserver_machines`.
+- Provider config: `endpoint` + `token`, with `DEPLOY_API_URL` /
+  `DEPLOY_API_TOKEN` env fallback; token marked sensitive.
+- **Validated end-to-end against a live api** (dev mode, throwaway
+  Postgres): built the provider, wired Terraform via `dev_overrides`, and
+  ran `terraform apply` → **machine + site created**, data source read;
+  a re-plan reported **no drift**; an in-place **update** applied (1
+  changed, not replaced); **destroy** removed both, confirmed gone via the
+  API. Plus unit tests (schemas well-formed, `token` sensitive, model
+  mappers) run in the api-less Go suite.
+- CI build/vet/test loop + `make test-unit` extended to the provider
+  module; `examples/main.tf`, provider README, top-level README.
+
 ## Phase 11 — Final docs
 **Done.**
 
