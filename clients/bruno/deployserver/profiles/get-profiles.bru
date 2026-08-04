@@ -1,0 +1,23 @@
+meta {
+  name: List deployment profiles
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/profiles
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `image.read`.
+}

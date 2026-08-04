@@ -79,6 +79,9 @@ sync-sdk-spec: ## Refresh every SDK's embedded OpenAPI spec from the api source 
 	cp services/api/internal/apispec/openapi.yaml services/sdk-ts/openapi.yaml
 	cp services/api/internal/apispec/openapi.yaml services/sdk-py/openapi.yaml
 
+collections: ## Regenerate the Postman + Bruno client collections from the OpenAPI spec.
+	cd services/api && go run ./cmd/gen-collections -out ../..
+
 test-e2e: ## Run the deploy-spine e2e smoke test (needs DEPLOY_TEST_PG_DSN).
 	cd tests/e2e && go test ./... -count=1 -v
 

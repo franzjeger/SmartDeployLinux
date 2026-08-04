@@ -1,0 +1,23 @@
+meta {
+  name: List roles with permissions
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/roles
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `user.read`.
+}

@@ -1,0 +1,28 @@
+meta {
+  name: Delete an answer-file template
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/profiles/:id/templates/:kind
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+  kind: string
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `image.write`.
+}

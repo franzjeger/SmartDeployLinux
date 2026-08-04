@@ -1,0 +1,23 @@
+meta {
+  name: List driver-pack versions
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/driver-packs
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `driverpack.read` or `image.read`.
+}

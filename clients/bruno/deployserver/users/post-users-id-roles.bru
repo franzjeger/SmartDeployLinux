@@ -1,0 +1,34 @@
+meta {
+  name: Grant a role to a user
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/users/:id/roles
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "role": "<string>"
+  }
+}
+
+docs {
+  Requires `user.write` (admin only).
+}

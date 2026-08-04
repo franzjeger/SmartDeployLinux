@@ -1,0 +1,35 @@
+meta {
+  name: Preview a profile's rendered answer file
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/profiles/:id/preview
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "body": "<string>",
+    "kind": "autoinstall"
+  }
+}
+
+docs {
+  Requires `profile.read`. Renders the stored template (or a provided draft body) with a synthetic machine context and reports whether the output is well-formed YAML — catching typos in the editor instead of on hardware.
+}

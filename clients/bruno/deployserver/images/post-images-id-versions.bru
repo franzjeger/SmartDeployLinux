@@ -1,0 +1,35 @@
+meta {
+  name: Link an uploaded blob as a new image version
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/v1/images/:id/versions
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "blob_id": "<uuid>",
+    "version_tag": "<string>"
+  }
+}
+
+docs {
+  Requires `image.write`. Register the blob with POST /api/v1/blobs first.
+}

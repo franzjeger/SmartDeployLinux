@@ -1,0 +1,27 @@
+meta {
+  name: Search the vendor driver-pack catalogs
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/vendor-driverpacks
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  ~q: 
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `driverpack.read`. Searches Lenovo's published enterprise driver-pack catalog by model name or machine type. Empty query returns nothing.
+}

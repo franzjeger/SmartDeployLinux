@@ -1,0 +1,35 @@
+meta {
+  name: Queue a wake-on-LAN
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/machines/:id/wake
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "at": "<date-time>",
+    "site": "<string>"
+  }
+}
+
+docs {
+  Requires `deployment.create`. Site defaults to the machine's `attributes.site`.
+}

@@ -1,0 +1,23 @@
+meta {
+  name: List registered bootstrap sticks
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/bootstrap-sticks
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `stick.read` or `*`.
+}

@@ -1,0 +1,41 @@
+meta {
+  name: Create a driver-pack version with match rules
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/driver-packs
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "blob_id": "<uuid>",
+    "model": "<string>",
+    "os_family": "windows",
+    "os_version": "<string>",
+    "rules": [
+      {
+        "type": "pci-vid-did",
+        "value": "<string>"
+      }
+    ],
+    "vendor": "<string>",
+    "version_tag": "<string>"
+  }
+}
+
+docs {
+  Requires `image.write`. Register the .zip blob (role=drivers) first.
+}

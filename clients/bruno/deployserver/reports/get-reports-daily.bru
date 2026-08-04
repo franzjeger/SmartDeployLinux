@@ -1,0 +1,27 @@
+meta {
+  name: Per-day outcomes (zero-filled)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reports/daily
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  ~days: 
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `job.read`.
+}

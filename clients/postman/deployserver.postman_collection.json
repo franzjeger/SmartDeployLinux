@@ -1,0 +1,2009 @@
+{
+  "info": {
+    "name": "deployserver operator API",
+    "description": "The operator-facing REST API for deployserver. All endpoints under `/api/v1` require a bearer OIDC ID token (obtain one with `deployctl auth login`); in dev mode (no OIDC configured) auth is open. Permissions are enforced per-endpoint via RBAC — the required permission is noted in each operation's description. This document is kept honest by a contract test that asserts the running routes and these paths are in exact correspondence.\n\nGenerated from the OpenAPI spec — do not edit by hand.\nSet the `baseUrl` and `token` collection variables (or use the bundled environment).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "identity",
+      "item": [
+        {
+          "name": "Pre-auth OIDC discovery",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "config"
+              ]
+            },
+            "description": "Public (pre-auth). The UI and CLI call this to learn the issuer and client id for the login flow, and whether the server runs in dev mode."
+          }
+        },
+        {
+          "name": "Current principal",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "me"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "machines",
+      "item": [
+        {
+          "name": "List machines",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/machines",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "machines"
+              ]
+            },
+            "description": "Requires `machine.read`."
+          }
+        },
+        {
+          "name": "Register a machine",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"asset_tag\": \"<string>\",\n  \"attributes\": {},\n  \"default_profile_id\": \"<uuid>\",\n  \"mac_primary\": \"<string>\",\n  \"model\": \"<string>\",\n  \"uuid_smbios\": \"<uuid>\",\n  \"vendor\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/machines",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "machines"
+              ]
+            },
+            "description": "Requires `machine.write`."
+          }
+        },
+        {
+          "name": "Get a machine",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/machines/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "machines",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `machine.read`."
+          }
+        },
+        {
+          "name": "Update a machine (partial)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"asset_tag\": \"<string>\",\n  \"attributes\": {},\n  \"default_profile_id\": \"<string>\",\n  \"mac_primary\": \"<string>\",\n  \"model\": \"<string>\",\n  \"vendor\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/machines/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "machines",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `machine.write`. Omitted fields are unchanged; an empty `default_profile_id` clears it."
+          }
+        },
+        {
+          "name": "Delete a machine",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/machines/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "machines",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `machine.write`."
+          }
+        },
+        {
+          "name": "Wake-request history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/machines/{id}/wake",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "machines",
+                ":id",
+                "wake"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `machine.read`."
+          }
+        },
+        {
+          "name": "Queue a wake-on-LAN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"at\": \"<date-time>\",\n  \"site\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/machines/{id}/wake",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "machines",
+                ":id",
+                "wake"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `deployment.create`. Site defaults to the machine's `attributes.site`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "profiles",
+      "item": [
+        {
+          "name": "List deployment profiles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles"
+              ]
+            },
+            "description": "Requires `image.read`."
+          }
+        },
+        {
+          "name": "Create a profile",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"answer_file_vars\": {},\n  \"image_id\": \"<uuid>\",\n  \"name\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles"
+              ]
+            },
+            "description": "Requires `image.write`."
+          }
+        },
+        {
+          "name": "Get a profile with its answer-file templates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/profiles/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.read`."
+          }
+        },
+        {
+          "name": "Update a profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/profiles/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.write`."
+          }
+        },
+        {
+          "name": "Delete a profile",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/profiles/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.write`."
+          }
+        },
+        {
+          "name": "Preview a profile's rendered answer file",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"<string>\",\n  \"kind\": \"autoinstall\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/profiles/{id}/preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles",
+                ":id",
+                "preview"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `profile.read`. Renders the stored template (or a provided draft body) with a synthetic machine context and reports whether the output is well-formed YAML — catching typos in the editor instead of on hardware."
+          }
+        },
+        {
+          "name": "Upsert an answer-file template",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"<string>\",\n  \"kind\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/profiles/{id}/templates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles",
+                ":id",
+                "templates"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.write`. `kind` is one of autoinstall|kickstart|preseed|cloud-init|ignition|unattend."
+          }
+        },
+        {
+          "name": "Delete an answer-file template",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/profiles/{id}/templates/{kind}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "profiles",
+                ":id",
+                "templates",
+                ":kind"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                },
+                {
+                  "key": "kind",
+                  "value": "string"
+                }
+              ]
+            },
+            "description": "Requires `image.write`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "images",
+      "item": [
+        {
+          "name": "Register a blob and get a presigned upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"<string>\",\n  \"role\": \"images\",\n  \"sha256\": \"<string>\",\n  \"size_bytes\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/blobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "blobs"
+              ]
+            },
+            "description": "Requires `image.write`. Upload the bytes to the returned URL (PUT), then link via image or driver-pack version."
+          }
+        },
+        {
+          "name": "List images",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/images",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "images"
+              ]
+            },
+            "description": "Requires `image.read`."
+          }
+        },
+        {
+          "name": "Create an image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"arch\": \"amd64\",\n  \"description\": \"<string>\",\n  \"media\": {\n    \"bootwim_url\": \"<string>\",\n    \"deploy_method\": \"golden\",\n    \"initrd_url\": \"<string>\",\n    \"kernel_url\": \"<string>\",\n    \"wim_url\": \"<string>\",\n    \"wimboot_url\": \"<string>\"\n  },\n  \"name\": \"<string>\",\n  \"os_family\": \"windows\",\n  \"os_version\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/images",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "images"
+              ]
+            },
+            "description": "Requires `image.write`."
+          }
+        },
+        {
+          "name": "Get an image",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/images/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "images",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.read`."
+          }
+        },
+        {
+          "name": "Update an image (name/description/media)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/images/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "images",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.write`."
+          }
+        },
+        {
+          "name": "Delete an image",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/images/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "images",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.write`."
+          }
+        },
+        {
+          "name": "List image versions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/images/{id}/versions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "images",
+                ":id",
+                "versions"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.read`."
+          }
+        },
+        {
+          "name": "Link an uploaded blob as a new image version",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blob_id\": \"<uuid>\",\n  \"version_tag\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/images/{id}/versions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "images",
+                ":id",
+                "versions"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.write`. Register the blob with POST /api/v1/blobs first."
+          }
+        }
+      ]
+    },
+    {
+      "name": "driver-packs",
+      "item": [
+        {
+          "name": "List driver-pack versions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/driver-packs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "driver-packs"
+              ]
+            },
+            "description": "Requires `driverpack.read` or `image.read`."
+          }
+        },
+        {
+          "name": "Create a driver-pack version with match rules",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blob_id\": \"<uuid>\",\n  \"model\": \"<string>\",\n  \"os_family\": \"windows\",\n  \"os_version\": \"<string>\",\n  \"rules\": [\n    {\n      \"type\": \"pci-vid-did\",\n      \"value\": \"<string>\"\n    }\n  ],\n  \"vendor\": \"<string>\",\n  \"version_tag\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/driver-packs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "driver-packs"
+              ]
+            },
+            "description": "Requires `image.write`. Register the .zip blob (role=drivers) first."
+          }
+        },
+        {
+          "name": "Delete a driver-pack version",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/driver-packs/versions/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "driver-packs",
+                "versions",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `image.write`."
+          }
+        },
+        {
+          "name": "Search the vendor driver-pack catalogs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/vendor-driverpacks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "vendor-driverpacks"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Model name or machine type, e.g. 'X1 Carbon' or '20XW'"
+                }
+              ]
+            },
+            "description": "Requires `driverpack.read`. Searches Lenovo's published enterprise driver-pack catalog by model name or machine type. Empty query returns nothing."
+          }
+        },
+        {
+          "name": "Queue a vendor driver-pack download",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/vendor-driverpacks/fetch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "vendor-driverpacks",
+                "fetch"
+              ]
+            },
+            "description": "Requires `driverpack.write`. The URL must be one returned by the search endpoint — the server only downloads addresses read from the vendor's own catalog. The pack is streamed into the blob store, sha256-verified against the catalog, and registered with dmi-product-prefix match rules for its machine types."
+          }
+        },
+        {
+          "name": "List vendor fetch jobs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/vendor-driverpacks/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "vendor-driverpacks",
+                "jobs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Requires `driverpack.read`. Most recent first."
+          }
+        }
+      ]
+    },
+    {
+      "name": "catalog",
+      "item": [
+        {
+          "name": "The distro net-install catalog",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/catalog",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "catalog"
+              ]
+            },
+            "description": "Requires `image.read`."
+          }
+        },
+        {
+          "name": "Install an image from the catalog",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entry_id\": \"<string>\",\n  \"name\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/catalog/install",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "catalog",
+                "install"
+              ]
+            },
+            "description": "Requires `image.write`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "jobs",
+      "item": [
+        {
+          "name": "List deployment jobs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/jobs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs"
+              ],
+              "query": [
+                {
+                  "key": "state",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "machine",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Requires `job.read`. Filter with `state`, `machine`, `limit`."
+          }
+        },
+        {
+          "name": "Get a job with its event trail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/jobs/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `job.read`."
+          }
+        },
+        {
+          "name": "Cancel a non-terminal job",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/jobs/{id}/cancel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs",
+                ":id",
+                "cancel"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `deployment.create`. Revokes the job's boot tokens."
+          }
+        }
+      ]
+    },
+    {
+      "name": "deployments",
+      "item": [
+        {
+          "name": "Issue deployment codes for many machines",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"machine_ids\": [\n    \"<uuid>\"\n  ],\n  \"profile_id\": \"<uuid>\",\n  \"ttl_seconds\": 0,\n  \"wake\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deployments/bulk",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deployments",
+                "bulk"
+              ]
+            },
+            "description": "Requires `deployment.create`. Up to 100 machines; always 200 with per-machine results."
+          }
+        },
+        {
+          "name": "Issue a deployment code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"binding_cidr\": \"<string>\",\n  \"capture_image_id\": \"<uuid>\",\n  \"capture_version_tag\": \"<string>\",\n  \"issued_for\": \"<string>\",\n  \"kind\": \"deploy\",\n  \"machine_id\": \"<uuid>\",\n  \"profile_id\": \"<uuid>\",\n  \"ttl_seconds\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deployments/issue",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deployments",
+                "issue"
+              ]
+            },
+            "description": "Requires `deployment.create` (capture additionally needs `image.write`)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "reports",
+      "item": [
+        {
+          "name": "Outcomes grouped by profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reports/by-profile?since=7d",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reports",
+                "by-profile"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "7d",
+                  "description": "24h / 7d / 30d style window"
+                }
+              ]
+            },
+            "description": "Requires `job.read`."
+          }
+        },
+        {
+          "name": "Outcomes grouped by site",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reports/by-site?since=7d",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reports",
+                "by-site"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "7d",
+                  "description": "24h / 7d / 30d style window"
+                }
+              ]
+            },
+            "description": "Requires `job.read`."
+          }
+        },
+        {
+          "name": "Per-day outcomes (zero-filled)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reports/daily",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reports",
+                "daily"
+              ],
+              "query": [
+                {
+                  "key": "days",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Requires `job.read`."
+          }
+        },
+        {
+          "name": "Flat CSV export of jobs in a window",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reports/jobs.csv?since=7d",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reports",
+                "jobs.csv"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "7d",
+                  "description": "24h / 7d / 30d style window"
+                }
+              ]
+            },
+            "description": "Requires `job.read`."
+          }
+        },
+        {
+          "name": "Deployment summary for a window",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reports/summary?since=7d",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reports",
+                "summary"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "7d",
+                  "description": "24h / 7d / 30d style window"
+                }
+              ]
+            },
+            "description": "Requires `job.read`. `since` accepts 24h/7d/30d style values."
+          }
+        }
+      ]
+    },
+    {
+      "name": "users",
+      "item": [
+        {
+          "name": "List roles with permissions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "roles"
+              ]
+            },
+            "description": "Requires `user.read`."
+          }
+        },
+        {
+          "name": "List users with their roles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": "Requires `user.read`."
+          }
+        },
+        {
+          "name": "Grant a role to a user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{id}/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":id",
+                "roles"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `user.write` (admin only)."
+          }
+        },
+        {
+          "name": "Revoke a role from a user",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/{id}/roles/{role}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":id",
+                "roles",
+                ":role"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                },
+                {
+                  "key": "role",
+                  "value": "string"
+                }
+              ]
+            },
+            "description": "Requires `user.write`. Refused (409) if it would remove the last admin."
+          }
+        }
+      ]
+    },
+    {
+      "name": "sites",
+      "item": [
+        {
+          "name": "List sites",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sites",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites"
+              ]
+            },
+            "description": "Requires `machine.read`."
+          }
+        },
+        {
+          "name": "Upsert a site (by name)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"<string>\",\n  \"mirror_base_url\": \"<string>\",\n  \"name\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sites",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites"
+              ]
+            },
+            "description": "Requires `machine.write`."
+          }
+        },
+        {
+          "name": "Delete a site",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sites/{name}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                ":name"
+              ],
+              "variable": [
+                {
+                  "key": "name",
+                  "value": "string"
+                }
+              ]
+            },
+            "description": "Requires `machine.write`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "bootstrap-sticks",
+      "item": [
+        {
+          "name": "List registered bootstrap sticks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bootstrap-sticks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bootstrap-sticks"
+              ]
+            },
+            "description": "Requires `stick.read` or `*`."
+          }
+        },
+        {
+          "name": "Register a built bootstrap stick",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ca_fingerprint\": \"<string>\",\n  \"deploy_url\": \"<string>\",\n  \"image_sha256\": \"<string>\",\n  \"label\": \"<string>\",\n  \"tailnet\": \"<string>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bootstrap-sticks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bootstrap-sticks"
+              ]
+            },
+            "description": "Requires `stick.write` or `*`."
+          }
+        },
+        {
+          "name": "Generate stick build config",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bootstrap-sticks/config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bootstrap-sticks",
+                "config"
+              ],
+              "query": [
+                {
+                  "key": "tailnet",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Requires `stick.write` or `*`. Returns config.json, the CA PEM, and the make-stick.sh command."
+          }
+        }
+      ]
+    },
+    {
+      "name": "audit",
+      "item": [
+        {
+          "name": "Query the audit log",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/audit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "audit"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "action",
+                  "value": "",
+                  "disabled": true,
+                  "description": "action prefix filter"
+                }
+              ]
+            },
+            "description": "Requires `audit.read`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "api-tokens",
+      "item": [
+        {
+          "name": "List your API tokens",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/api-tokens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api-tokens"
+              ]
+            },
+            "description": "Requires `apitoken.read` or `*`. Returns the caller's own tokens (the secret is never included; revoked and expired tokens are listed with their `revoked_at` / `expires_at` set)."
+          }
+        },
+        {
+          "name": "Create an API token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expires_in_days\": 0,\n  \"name\": \"<string>\",\n  \"roles\": [\n    \"<string>\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/api-tokens",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api-tokens"
+              ]
+            },
+            "description": "Requires `apitoken.write` or `*`. Mints a long-lived bearer token that authenticates as the calling user (inheriting exactly that user's permissions). The plaintext secret is returned **once** in this response and never again."
+          }
+        },
+        {
+          "name": "Revoke an API token",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/api-tokens/{id}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api-tokens",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "uuid"
+                }
+              ]
+            },
+            "description": "Requires `apitoken.write` or `*`. Revokes one of the caller's own tokens. Idempotent only in effect — a second revoke returns 404."
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://deploy.example.com",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

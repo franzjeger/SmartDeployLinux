@@ -1,0 +1,30 @@
+meta {
+  name: Queue a vendor driver-pack download
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/vendor-driverpacks/fetch
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "url": "<string>"
+  }
+}
+
+docs {
+  Requires `driverpack.write`. The URL must be one returned by the search endpoint — the server only downloads addresses read from the vendor's own catalog. The pack is streamed into the blob store, sha256-verified against the catalog, and registered with dmi-product-prefix match rules for its machine types.
+}

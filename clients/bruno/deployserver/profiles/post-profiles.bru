@@ -1,0 +1,32 @@
+meta {
+  name: Create a profile
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/profiles
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "answer_file_vars": {},
+    "image_id": "<uuid>",
+    "name": "<string>"
+  }
+}
+
+docs {
+  Requires `image.write`.
+}

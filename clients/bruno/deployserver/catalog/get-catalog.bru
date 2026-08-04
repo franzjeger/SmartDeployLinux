@@ -1,0 +1,23 @@
+meta {
+  name: The distro net-install catalog
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/catalog
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `image.read`.
+}

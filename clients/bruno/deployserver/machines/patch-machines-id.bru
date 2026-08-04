@@ -1,0 +1,39 @@
+meta {
+  name: Update a machine (partial)
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/machines/:id
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "asset_tag": "<string>",
+    "attributes": {},
+    "default_profile_id": "<string>",
+    "mac_primary": "<string>",
+    "model": "<string>",
+    "vendor": "<string>"
+  }
+}
+
+docs {
+  Requires `machine.write`. Omitted fields are unchanged; an empty `default_profile_id` clears it.
+}

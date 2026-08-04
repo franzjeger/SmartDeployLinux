@@ -1,0 +1,27 @@
+meta {
+  name: Generate stick build config
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/bootstrap-sticks/config
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  ~tailnet: 
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `stick.write` or `*`. Returns config.json, the CA PEM, and the make-stick.sh command.
+}

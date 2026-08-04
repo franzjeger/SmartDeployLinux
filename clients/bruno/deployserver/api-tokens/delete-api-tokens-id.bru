@@ -1,0 +1,27 @@
+meta {
+  name: Revoke an API token
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/api-tokens/:id
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:path {
+  id: uuid
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `apitoken.write` or `*`. Revokes one of the caller's own tokens. Idempotent only in effect — a second revoke returns 404.
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Install an image from the catalog
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/catalog/install
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "entry_id": "<string>",
+    "name": "<string>"
+  }
+}
+
+docs {
+  Requires `image.write`.
+}

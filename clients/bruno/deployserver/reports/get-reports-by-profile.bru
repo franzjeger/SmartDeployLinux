@@ -1,0 +1,27 @@
+meta {
+  name: Outcomes grouped by profile
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/reports/by-profile?since=7d
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+params:query {
+  since: 7d
+}
+
+headers {
+  Accept: application/json
+}
+
+docs {
+  Requires `job.read`.
+}
