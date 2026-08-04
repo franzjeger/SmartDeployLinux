@@ -68,10 +68,10 @@ real machines is exactly what promotes **`v1.0.0-rc` → `v1.0.0`**:
 - [ ] **LAN PXE + edge agent on real L2 (FT-8, FT-9)** — proxyDHCP/TFTP
       menu, the site image-mirror cache, and wake-on-LAN against real
       machines.
-- [ ] **Operational resilience (no FT yet — write one)** — a rehearsal of
-      the HA tier (3 nodes + external Postgres + S3), a backup/restore
-      drill, an in-place upgrade with rollback, and a basic load/failover
-      test. These are validated by config today but have never been run.
+- [ ] **Operational resilience (FT-12)** — a rehearsal of the HA tier
+      (2 api replicas + external Postgres + S3), a backup/restore drill, an
+      in-place upgrade with rollback, cross-replica failover, and a load/
+      soak test. Validated by config today but never run.
 
 Until this checklist is green on real machines, treat the product as a
 **release candidate**: software-complete and software-proven,
@@ -302,6 +302,81 @@ Run these with FT-4's artifacts at hand:
 | Revoke the last admin's role | 409 |
 | grep caddy/nginx access logs for `token=` | no hits (bearer-only) |
 
+## FT-12 — Operational resilience (HA, backup, upgrade, failover, load)
+
+*The day-2 story the sandbox never rehearsed: the 3-node tier actually
+running, a backup you've restored, an upgrade you've rolled back, a
+replica you've killed under load. `docker-compose.ha.yml` validates as
+config in CI but has never been brought up. Do these on a staging stack
+that mirrors production (external Postgres + S3), not the single-host
+tier.*
+
+*Prereqs: a managed/external Postgres and an S3-compatible store reachable
+from the host; `.env` with `POSTGRES_*`, `S3_*`, `DEPLOY_FQDN`, `REGISTRY`,
+`TAG`. See `docs/OPERATIONS.md` and `docs/UPGRADING.md` for the canonical
+commands referenced below.*
+
+**a) HA bring-up.**
+`docker compose -f docker-compose.ha.yml up -d`.
+✅ The one-shot `api-migrate` runs to completion **before** the `api`
+replicas start (check its logs; concurrent replicas must never race the
+same migration); both `api` replicas report ready
+(`docker compose -f docker-compose.ha.yml ps` → 2× healthy); Caddy
+round-robins `/readyz` across them; `auth-broker`, `worker`, `http-boot`
+are up. Run one full FT-4 Linux deploy against the HA endpoint to prove
+the stack is live, not just healthy.
+🔍 `api-migrate` logs first, then per-replica `api` logs; a replica stuck
+unhealthy is nearly always a Postgres/S3 reachability or cert-path issue.
+
+**b) Cross-replica SSE + replica failover.**
+Open a live deploy's event stream in the UI (served by replica X). Mid-job,
+`docker compose -f docker-compose.ha.yml stop` **that** replica.
+✅ The stream keeps updating — phone-homes land on the surviving replica
+and ride Postgres `LISTEN/NOTIFY` to the open stream (the whole point of
+the pgbus event bus; the automated proof is `internal/pgbus`'
+`TestCrossInstanceDelivery`, exercised here across real containers). The
+in-flight job still reaches `completed`; no event is lost or duplicated.
+Restart the replica → it rejoins and serves traffic again.
+
+**c) Backup + restore drill.** *A backup you've never restored isn't a
+backup (OPERATIONS.md §1).*
+1. Take a dump: `pg_dump -Fc --no-owner` of the live DB; `mc mirror` the
+   blob bucket offsite.
+2. Restore into a **fresh, empty** database
+   (`pg_restore --clean --if-exists`) and point a throwaway api at it.
+✅ The restored api serves the same machines/images/jobs (spot-check a
+known job id and its event trail); blob URLs resolve against the mirrored
+bucket; `\dt` shows the full schema with `schema_migrations` intact.
+📸 Evidence: dump size + sha, restored `/api/v1/reports/summary` matching
+the source.
+
+**d) In-place upgrade with rollback (UPGRADING.md).**
+1. Note the running `TAG`. Bump to the new image `TAG`, re-run
+   `api-migrate`, then `up -d` the replicas (rolling: one at a time — the
+   other keeps serving).
+✅ Migrations apply forward cleanly; both replicas come back on the new
+tag with **no deploy downtime** (a `while curl /readyz` loop never drops);
+an in-flight deploy started before the upgrade still completes.
+2. **Roll back:** redeploy the previous `TAG`.
+✅ The app runs on the old image against the migrated schema (forward-only
+migrations must stay backward-compatible for one release — call out any
+that aren't). Document the exact rollback commands that worked.
+🔍 If a replica crash-loops after the bump, it's usually a migration the
+old image can't tolerate — capture it; that's a release-blocker.
+
+**e) Load / soak.** Drive concurrency the sandbox never did: e.g. 50
+simulated machines phoning home across many jobs
+(`hey`/`vegeta`/a shell loop against `/v1/jobs/<id>/events` and
+`/internal/render/by-token/...`) for ~15 min.
+✅ No 5xx in Caddy/api logs; `/metrics` shows p99 latency stable and the
+Postgres pool not exhausted (no `pool timeout`); memory flat (no leak
+over the soak); every job lands in a correct terminal state.
+📸 Evidence: the load tool's summary, a Grafana screenshot over the run.
+
+🔍 All of FT-12: this is where config-only validation stops paying off —
+capture logs and metrics generously. File any HA/upgrade/backup gap as a
+`field-test` issue **with** the compose/migration diff that reproduces it.
+
 ---
 
 ## Results record
@@ -321,6 +396,7 @@ Copy per test run:
 | FT-9a/b/c | | | ☐ pass ☐ fail | |
 | FT-10 | | | ☐ pass ☐ fail | |
 | FT-11 | | | ☐ pass ☐ fail | |
+| FT-12a/b/c/d/e | | | ☐ pass ☐ fail | |
 
 File findings as issues tagged `field-test`; anything that reproduces
 in the sandbox gets a regression test before the fix lands.
