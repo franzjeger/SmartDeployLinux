@@ -1023,6 +1023,41 @@ but never driven end to end against a real disk that actually boots).
   `tests/e2e-kvm/README.md`.
 - `make test-e2e-kvm`.
 
+## Phase 37 — the advertised path, proven over a real overlay
+
+**Done.**
+
+Closes the biggest remaining gap: the WAN/Tailscale claim the whole
+project is built on — *stick joins your tailnet via a single-use operator
+code, then installs over HTTPS-via-tailnet* — had never been exercised. It
+now runs green against the **real Headscale + real Tailscale**, for both OS
+families, with nothing stubbed on the critical path.
+
+`tests/e2e-tailnet/` (`setup.sh` builds real headscale/tailscaled/tailscale
+from source + config; `run.sh` drives the proof):
+
+- real **Headscale** control plane; an **ephemeral single-use tagged
+  pre-auth key** minted via `POST /api/v1/preauthkey` — byte-for-byte the
+  auth-broker's `tsclient` contract;
+- two real **tailscaled** nodes register and get tailnet IPs (a
+  deploy-server node the api runs on, and a stick-client node = the
+  machine); the harness asserts the stick reaches the api **over WireGuard**
+  before deploying;
+- **Linux:** the full `e2e-kvm` deploy driven so every HTTP call
+  (render-by-token, restore.sh, golden archive, phone-home) rides the
+  stick's tailscale data path — real disk restored, job `completed`, and
+  the restored disk **boots** in QEMU;
+- **Windows:** the entire server-side WinPE conversation over the same
+  overlay — `deploy.cmd`, the `/plan` **DMI+PCI driver match** (a Dell pack
+  matched by vendor and PCI VID:DID), rendered `unattend.xml`, and the
+  `image.wim`/`drivers.zip` 302 blob handoffs — phoned home `completed`.
+- **Honest boundary:** one host (WireGuard peer is local — coordination and
+  transport proven, not real-internet NAT traversal, which is Tailscale's
+  job); userspace tailscaled + SOCKS; **no real WinPE boot** (needs the
+  Windows ADK + licensed media — still a `FIELD_TEST.md` item); QEMU under
+  TCG. Details in `tests/e2e-tailnet/README.md`.
+- `make test-e2e-tailnet`.
+
 ## Phase 11 — Final docs
 **Done.**
 

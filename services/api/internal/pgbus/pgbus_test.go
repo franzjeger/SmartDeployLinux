@@ -79,9 +79,15 @@ func TestCrossInstanceDelivery(t *testing.T) {
 
 	// The publisher's own subscribers get exactly one copy too (via its
 	// listener — no local short-circuit double delivery).
-	subA, cancelA := a.Subscribe(jobID)
+	//
+	// Use a FRESH job id here: the first Publish above was dispatched
+	// before subA existed, but replica A's own listener receives that
+	// NOTIFY too and drains it asynchronously — on a different job id it
+	// cannot leak into subA and race ahead of the event we publish next.
+	jobID2 := uuid.New()
+	subA, cancelA := a.Subscribe(jobID2)
 	defer cancelA()
-	a.Publish(eventbus.Event{JobID: jobID, Phase: "post_install"})
+	a.Publish(eventbus.Event{JobID: jobID2, Phase: "post_install"})
 	select {
 	case ev := <-subA:
 		if ev.Phase != "post_install" {
