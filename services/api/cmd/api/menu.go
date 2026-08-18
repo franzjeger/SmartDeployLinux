@@ -165,14 +165,7 @@ func (h *handlers) buildMenuScript(d menuData) string {
 	}
 	fmt.Fprintf(&b, `:gather
 echo Gathering hardware info from SMBIOS ...
-params
-param mac ${net0/mac}
-param manufacturer ${manufacturer}
-param product ${product}
-param serial ${serial}
-param uuid ${uuid}
-param asset ${asset}
-chain https://%s/enroll##params || goto menu_failed
+chain https://%s/enroll?mac=${net0/mac}&manufacturer=${manufacturer:uristring}&product=${product:uristring}&serial=${serial:uristring}&uuid=${uuid:uristring} || goto menu_failed
 
 `, fqdn)
 	b.WriteString(":shell\nshell\ngoto start\n\n:reboot\nreboot\n\n:local\necho Booting from local disk ...\nexit 1 || sanboot --no-describe --drive 0x80 || goto start\n\n:menu_failed\necho Action failed. Returning to menu in 5s ...\nsleep 5\ngoto start\n")

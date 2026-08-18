@@ -250,6 +250,7 @@ func serve() {
 	// network access to the api can `chain` to this URL and get a
 	// netboot.xyz-style picker.
 	pub.Get("/catalog/menu.ipxe", h.catalogMenuIPXE)
+	pub.Get("/enroll", h.renderEnroll)
 	pub.Post("/enroll", h.renderEnroll)
 
 	// Pre-auth: the SPA fetches issuer/client_id to run the OIDC
