@@ -992,7 +992,34 @@ func (h *handlers) me(w http.ResponseWriter, r *http.Request) {
 		"email":    auth.Email(r.Context()),
 		"dev_mode": dev,
 	}
+	if dev {
+		out["roles"] = []string{"admin"}
+		out["permissions"] = meAllPermissions()
+	} else {
+		roles, _ := h.store.ListUserRoleNames(r.Context(), uid)
+		perms, _ := h.store.LoadUserPermissions(r.Context(), uid)
+		for _, pm := range perms {
+			if pm == "*" {
+				perms = meAllPermissions()
+				break
+			}
+		}
+		if roles == nil {
+			roles = []string{}
+		}
+		if perms == nil {
+			perms = []string{}
+		}
+		out["roles"] = roles
+		out["permissions"] = perms
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// meAllPermissions is the concrete permission set that the "*" wildcard
+// (admin) grants, so a UI checking for specific permission strings works.
+func meAllPermissions() []string {
+	return []string{"*", "apitoken.read", "apitoken.write", "audit.read", "deployment.create", "driverpack.read", "driverpack.write", "image.read", "image.write", "job.read", "machine.read", "machine.write", "profile.read", "stick.read", "stick.write", "user.read", "user.write"}
 }
 
 // Suppress unused-import errors when handler bodies grow/shrink.
