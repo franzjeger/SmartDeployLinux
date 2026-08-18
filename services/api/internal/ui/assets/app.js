@@ -740,10 +740,40 @@ function jobsTable(jobs) {
           <td>${escapeHTML(j.machine_asset_tag || trunc(j.machine_id))}</td>
           <td>${escapeHTML(j.profile_name)}</td>
           <td class="mono small muted">${fmtTime(j.started_at || j.created_at)}</td>
-          <td class="actions"><a class="btn small secondary" href="#/jobs/${j.id}">Open</a></td>
+          <td class="actions"><a class="btn small secondary" href="#/jobs/${j.id}">Open</a>${["completed","failed","cancelled"].includes(j.state) ? ` <button class="btn small danger" onclick="event.stopPropagation(); jobDelete('${j.id}')">Delete</button>` : ""}</td>
         </tr>`).join("")}
     </tbody>
   </table></div>`;
+}
+
+// ---------- job actions (delete / prune) ----------
+
+async function jobDelete(id) {
+  const ok = await confirmModal({
+    title: "Delete job",
+    message: "Delete this deployment job? This is permanent.",
+    danger: true, primaryLabel: "Delete",
+  });
+  if (!ok) return;
+  try {
+    await api("DELETE", `/api/v1/jobs/${id}`);
+    toast("Job deleted", "ok");
+    navigate();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function jobsPrune() {
+  const ok = await confirmModal({
+    title: "Prune finished jobs",
+    message: "Delete all completed, failed and cancelled jobs? This is permanent.",
+    danger: true, primaryLabel: "Prune",
+  });
+  if (!ok) return;
+  try {
+    const r = await api("POST", "/api/v1/jobs/prune");
+    toast(`Pruned ${r && r.deleted != null ? r.deleted : 0} job(s)`, "ok");
+    navigate();
+  } catch (e) { toast(e.message, "err"); }
 }
 
 // ---------- views: Machines list ----------
@@ -1317,7 +1347,7 @@ route("/jobs", async () => {
     <div class="page">
       <div class="page-title">
         <div><h1>Deployment jobs</h1><p class="subtitle">All issued + in-flight + completed deployments.</p></div>
-        <div class="page-actions"><a class="btn" href="#/deploy">+ New deployment</a></div>
+        <div class="page-actions"><button class="btn secondary" onclick="jobsPrune()">Prune finished</button> <a class="btn" href="#/deploy">+ New deployment</a></div>
       </div>
       <div class="filter-chips" style="margin: 0 0 12px 0;">
         ${["", "pending","bootstrapped","imaging","post_install","completed","failed","cancelled"].map(s => `
