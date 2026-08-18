@@ -1,5 +1,5 @@
 {
-  "version": "2026.04.26.4",
+  "version": "2026.04.26.4-http",
   "doc": "Curated upstream-mirror catalog inspired by netboot.xyz. Entries with kernel_url + initrd_url chainload directly from the upstream mirror. Entries with chain_url instead delegate to netboot.xyz's iPXE script for distros that need custom boot logic (live ISOs, custom installers). The bottom of the iPXE menu also offers a 'Browse netboot.xyz' chain that exposes their full catalog as a fallback.",
   "categories": [
     {
@@ -9,48 +9,58 @@
         {
           "id": "ubuntu-2604-server",
           "name": "Ubuntu 26.04 LTS Server (Resolute Raccoon)",
-          "os_family": "linux", "os_version": "26.04", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "26.04",
+          "arch": "amd64",
           "description": "Ubuntu 26.04 LTS — released 2026-04-23. Canonical's official netboot tarball is at releases.ubuntu.com/resolute/ubuntu-26.04-netboot-amd64.tar.gz; iPXE chains via netboot.xyz which handles the kernel+initrd extraction.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/ubuntu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/ubuntu.ipxe"
           }
         },
         {
           "id": "ubuntu-2404-server",
           "name": "Ubuntu 24.04 LTS Server (Noble Numbat)",
-          "os_family": "linux", "os_version": "24.04", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "24.04",
+          "arch": "amd64",
           "description": "Ubuntu 24.04 LTS — Canonical discontinued the classic debian-installer netboot path; iPXE chains to netboot.xyz which packages extracted live-server kernel+initrd on each point release.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/ubuntu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/ubuntu.ipxe"
           }
         },
         {
           "id": "ubuntu-2204-server",
           "name": "Ubuntu 22.04 LTS Server (Jammy Jellyfish)",
-          "os_family": "linux", "os_version": "22.04", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "22.04",
+          "arch": "amd64",
           "description": "Ubuntu 22.04 LTS — same netboot.xyz chain pattern as 24.04+ since Canonical retired the legacy installer path.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/ubuntu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/ubuntu.ipxe"
           }
         },
         {
           "id": "ubuntu-2004-server",
           "name": "Ubuntu 20.04 LTS Server (Focal Fossa)",
-          "os_family": "linux", "os_version": "20.04", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "20.04",
+          "arch": "amd64",
           "description": "Ubuntu 20.04 LTS — last release with the classic archive.ubuntu.com debian-installer netboot. Direct kernel+initrd URLs work.",
           "media": {
-            "kernel_url": "https://archive.ubuntu.com/ubuntu/dists/focal/main/installer-amd64/current/legacy-images/netboot/ubuntu-installer/amd64/linux",
-            "initrd_url": "https://archive.ubuntu.com/ubuntu/dists/focal/main/installer-amd64/current/legacy-images/netboot/ubuntu-installer/amd64/initrd.gz",
+            "kernel_url": "http://archive.ubuntu.com/ubuntu/dists/focal/main/installer-amd64/current/legacy-images/netboot/ubuntu-installer/amd64/linux",
+            "initrd_url": "http://archive.ubuntu.com/ubuntu/dists/focal/main/installer-amd64/current/legacy-images/netboot/ubuntu-installer/amd64/initrd.gz",
             "kernel_args": "auto=true priority=critical interface=auto"
           }
         },
         {
           "id": "ubuntu-desktop",
           "name": "Ubuntu Desktop (latest LTS, live ISO)",
-          "os_family": "linux", "os_version": "latest", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "latest",
+          "arch": "amd64",
           "description": "Ubuntu Desktop live ISO via netboot.xyz — covers 24.04, 26.04 desktop, and flavours (Kubuntu, Lubuntu, etc.) interactively.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/ubuntu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/ubuntu.ipxe"
           }
         }
       ]
@@ -62,33 +72,39 @@
         {
           "id": "debian-12",
           "name": "Debian 12 (Bookworm)",
-          "os_family": "linux", "os_version": "12", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "12",
+          "arch": "amd64",
           "description": "Debian 12 stable netboot from deb.debian.org.",
           "media": {
-            "kernel_url": "https://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
-            "initrd_url": "https://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
+            "kernel_url": "http://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
+            "initrd_url": "http://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
             "kernel_args": "auto=true priority=critical interface=auto"
           }
         },
         {
           "id": "debian-11",
           "name": "Debian 11 (Bullseye)",
-          "os_family": "linux", "os_version": "11", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "11",
+          "arch": "amd64",
           "description": "Debian 11 oldstable netboot.",
           "media": {
-            "kernel_url": "https://deb.debian.org/debian/dists/bullseye/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
-            "initrd_url": "https://deb.debian.org/debian/dists/bullseye/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
+            "kernel_url": "http://deb.debian.org/debian/dists/bullseye/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
+            "initrd_url": "http://deb.debian.org/debian/dists/bullseye/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
             "kernel_args": "auto=true priority=critical interface=auto"
           }
         },
         {
           "id": "debian-13",
           "name": "Debian 13 (Trixie, testing)",
-          "os_family": "linux", "os_version": "13", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "13",
+          "arch": "amd64",
           "description": "Debian 13 testing netboot.",
           "media": {
-            "kernel_url": "https://deb.debian.org/debian/dists/trixie/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
-            "initrd_url": "https://deb.debian.org/debian/dists/trixie/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
+            "kernel_url": "http://deb.debian.org/debian/dists/trixie/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
+            "initrd_url": "http://deb.debian.org/debian/dists/trixie/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
             "kernel_args": "auto=true priority=critical interface=auto"
           }
         }
@@ -101,109 +117,129 @@
         {
           "id": "rocky-9",
           "name": "Rocky Linux 9",
-          "os_family": "linux", "os_version": "9", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "9",
+          "arch": "amd64",
           "description": "Rocky 9 netboot via Anaconda inst.repo.",
           "media": {
-            "kernel_url": "https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
-            "initrd_url": "https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/images/pxeboot/initrd.img",
-            "kernel_args": "inst.stage2=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.repo=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/"
+            "kernel_url": "http://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "http://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=http://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.repo=http://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/"
           }
         },
         {
           "id": "rocky-8",
           "name": "Rocky Linux 8",
-          "os_family": "linux", "os_version": "8", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "8",
+          "arch": "amd64",
           "description": "Rocky 8 netboot.",
           "media": {
-            "kernel_url": "https://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
-            "initrd_url": "https://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/images/pxeboot/initrd.img",
-            "kernel_args": "inst.stage2=https://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/ inst.repo=https://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/"
+            "kernel_url": "http://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "http://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=http://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/ inst.repo=http://download.rockylinux.org/pub/rocky/8/BaseOS/x86_64/os/"
           }
         },
         {
           "id": "alma-9",
           "name": "AlmaLinux 9",
-          "os_family": "linux", "os_version": "9", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "9",
+          "arch": "amd64",
           "description": "AlmaLinux 9 netboot.",
           "media": {
-            "kernel_url": "https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
-            "initrd_url": "https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/images/pxeboot/initrd.img",
-            "kernel_args": "inst.stage2=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/"
+            "kernel_url": "http://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "http://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=http://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.repo=http://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/"
           }
         },
         {
           "id": "alma-8",
           "name": "AlmaLinux 8",
-          "os_family": "linux", "os_version": "8", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "8",
+          "arch": "amd64",
           "description": "AlmaLinux 8 netboot.",
           "media": {
-            "kernel_url": "https://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
-            "initrd_url": "https://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/images/pxeboot/initrd.img",
-            "kernel_args": "inst.stage2=https://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/ inst.repo=https://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/"
+            "kernel_url": "http://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "http://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=http://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/ inst.repo=http://repo.almalinux.org/almalinux/8/BaseOS/x86_64/os/"
           }
         },
         {
           "id": "fedora-44-everything",
           "name": "Fedora 44 Everything (final April 28, 2026)",
-          "os_family": "linux", "os_version": "44", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "44",
+          "arch": "amd64",
           "description": "Fedora 44 Everything — Linux 6.19, GNOME 50, KDE Plasma 6.6. Currently served from the development branch; the same path becomes /releases/44/ on April 28. Anaconda lets you pick env interactively.",
           "media": {
-            "kernel_url": "https://dl.fedoraproject.org/pub/fedora/linux/development/44/Everything/x86_64/os/images/pxeboot/vmlinuz",
-            "initrd_url": "https://dl.fedoraproject.org/pub/fedora/linux/development/44/Everything/x86_64/os/images/pxeboot/initrd.img",
-            "kernel_args": "inst.stage2=https://dl.fedoraproject.org/pub/fedora/linux/development/44/Everything/x86_64/os/ inst.repo=https://dl.fedoraproject.org/pub/fedora/linux/development/44/Everything/x86_64/os/"
+            "kernel_url": "http://dl.fedoraproject.org/pub/fedora/linux/development/44/Everything/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "http://dl.fedoraproject.org/pub/fedora/linux/development/44/Everything/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=http://dl.fedoraproject.org/pub/fedora/linux/development/44/Everything/x86_64/os/ inst.repo=http://dl.fedoraproject.org/pub/fedora/linux/development/44/Everything/x86_64/os/"
           }
         },
         {
           "id": "fedora-44-server",
           "name": "Fedora 44 Server (final April 28, 2026)",
-          "os_family": "linux", "os_version": "44", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "44",
+          "arch": "amd64",
           "description": "Fedora 44 Server netboot — currently served from /development/.",
           "media": {
-            "kernel_url": "https://dl.fedoraproject.org/pub/fedora/linux/development/44/Server/x86_64/os/images/pxeboot/vmlinuz",
-            "initrd_url": "https://dl.fedoraproject.org/pub/fedora/linux/development/44/Server/x86_64/os/images/pxeboot/initrd.img",
-            "kernel_args": "inst.stage2=https://dl.fedoraproject.org/pub/fedora/linux/development/44/Server/x86_64/os/ inst.repo=https://dl.fedoraproject.org/pub/fedora/linux/development/44/Server/x86_64/os/"
+            "kernel_url": "http://dl.fedoraproject.org/pub/fedora/linux/development/44/Server/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "http://dl.fedoraproject.org/pub/fedora/linux/development/44/Server/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=http://dl.fedoraproject.org/pub/fedora/linux/development/44/Server/x86_64/os/ inst.repo=http://dl.fedoraproject.org/pub/fedora/linux/development/44/Server/x86_64/os/"
           }
         },
         {
           "id": "fedora-43-everything",
           "name": "Fedora 43 Everything (current stable)",
-          "os_family": "linux", "os_version": "43", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "43",
+          "arch": "amd64",
           "description": "Fedora 43 Everything netboot — current stable until F44 ships. Anaconda picks env interactively.",
           "media": {
-            "kernel_url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/images/pxeboot/vmlinuz",
-            "initrd_url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/images/pxeboot/initrd.img",
-            "kernel_args": "inst.stage2=https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/ inst.repo=https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/"
+            "kernel_url": "http://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "http://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=http://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/ inst.repo=http://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/"
           }
         },
         {
           "id": "fedora-43-server",
           "name": "Fedora 43 Server (current stable)",
-          "os_family": "linux", "os_version": "43", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "43",
+          "arch": "amd64",
           "description": "Fedora 43 Server netboot.",
           "media": {
-            "kernel_url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/os/images/pxeboot/vmlinuz",
-            "initrd_url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/os/images/pxeboot/initrd.img",
-            "kernel_args": "inst.stage2=https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/os/ inst.repo=https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/os/"
+            "kernel_url": "http://dl.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "http://dl.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=http://dl.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/os/ inst.repo=http://dl.fedoraproject.org/pub/fedora/linux/releases/43/Server/x86_64/os/"
           }
         },
         {
           "id": "fedora-coreos-stable",
           "name": "Fedora CoreOS (stable)",
-          "os_family": "linux", "os_version": "stable", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "stable",
+          "arch": "amd64",
           "description": "Fedora CoreOS — minimal immutable container host. Configure via Ignition served as ignition.config.url= kernel arg.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         },
         {
           "id": "centos-stream-9",
           "name": "CentOS Stream 9",
-          "os_family": "linux", "os_version": "9", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "9",
+          "arch": "amd64",
           "description": "CentOS Stream 9 netboot.",
           "media": {
-            "kernel_url": "https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
-            "initrd_url": "https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/images/pxeboot/initrd.img",
-            "kernel_args": "inst.stage2=https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/ inst.repo=https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/"
+            "kernel_url": "http://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/images/pxeboot/vmlinuz",
+            "initrd_url": "http://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/images/pxeboot/initrd.img",
+            "kernel_args": "inst.stage2=http://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/ inst.repo=http://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/"
           }
         }
       ]
@@ -215,32 +251,38 @@
         {
           "id": "opensuse-tumbleweed",
           "name": "openSUSE Tumbleweed",
-          "os_family": "linux", "os_version": "tumbleweed", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "tumbleweed",
+          "arch": "amd64",
           "description": "openSUSE Tumbleweed rolling release netboot.",
           "media": {
-            "kernel_url": "https://download.opensuse.org/tumbleweed/repo/oss/boot/x86_64/loader/linux",
-            "initrd_url": "https://download.opensuse.org/tumbleweed/repo/oss/boot/x86_64/loader/initrd",
-            "kernel_args": "install=https://download.opensuse.org/tumbleweed/repo/oss/"
+            "kernel_url": "http://download.opensuse.org/tumbleweed/repo/oss/boot/x86_64/loader/linux",
+            "initrd_url": "http://download.opensuse.org/tumbleweed/repo/oss/boot/x86_64/loader/initrd",
+            "kernel_args": "install=http://download.opensuse.org/tumbleweed/repo/oss/"
           }
         },
         {
           "id": "opensuse-leap-15-6",
           "name": "openSUSE Leap 15.6",
-          "os_family": "linux", "os_version": "15.6", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "15.6",
+          "arch": "amd64",
           "description": "openSUSE Leap 15.6 stable netboot.",
           "media": {
-            "kernel_url": "https://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/linux",
-            "initrd_url": "https://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/initrd",
-            "kernel_args": "install=https://download.opensuse.org/distribution/leap/15.6/repo/oss/"
+            "kernel_url": "http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/linux",
+            "initrd_url": "http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/initrd",
+            "kernel_args": "install=http://download.opensuse.org/distribution/leap/15.6/repo/oss/"
           }
         },
         {
           "id": "opensuse-microos",
           "name": "openSUSE MicroOS",
-          "os_family": "linux", "os_version": "rolling", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
           "description": "openSUSE MicroOS — immutable transactional system. Custom boot via netboot.xyz.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         }
       ]
@@ -252,59 +294,71 @@
         {
           "id": "archlinux-latest",
           "name": "Arch Linux (latest)",
-          "os_family": "linux", "os_version": "rolling", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
           "description": "Arch Linux netboot. Kernel + initrd auto-update with each monthly release.",
           "media": {
-            "kernel_url": "https://geo.mirror.pkgbuild.com/iso/latest/arch/boot/x86_64/vmlinuz-linux",
-            "initrd_url": "https://geo.mirror.pkgbuild.com/iso/latest/arch/boot/x86_64/initramfs-linux.img",
-            "kernel_args": "archisobasedir=arch archiso_http_srv=https://geo.mirror.pkgbuild.com/iso/latest/ ip=dhcp"
+            "kernel_url": "http://geo.mirror.pkgbuild.com/iso/latest/arch/boot/x86_64/vmlinuz-linux",
+            "initrd_url": "http://geo.mirror.pkgbuild.com/iso/latest/arch/boot/x86_64/initramfs-linux.img",
+            "kernel_args": "archisobasedir=arch archiso_http_srv=http://geo.mirror.pkgbuild.com/iso/latest/ ip=dhcp"
           }
         },
         {
           "id": "alpine-3-20",
           "name": "Alpine Linux 3.20",
-          "os_family": "linux", "os_version": "3.20", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "3.20",
+          "arch": "amd64",
           "description": "Alpine 3.20 netboot — minimal Linux for containers + appliances.",
           "media": {
-            "kernel_url": "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/netboot/vmlinuz-lts",
-            "initrd_url": "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/netboot/initramfs-lts",
-            "kernel_args": "modloop=https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/netboot/modloop-lts"
+            "kernel_url": "http://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/netboot/vmlinuz-lts",
+            "initrd_url": "http://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/netboot/initramfs-lts",
+            "kernel_args": "modloop=http://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/netboot/modloop-lts"
           }
         },
         {
           "id": "cachyos",
           "name": "CachyOS",
-          "os_family": "linux", "os_version": "rolling", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
           "description": "CachyOS — performance-focused Arch derivative. Live ISO via netboot.xyz chain.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         },
         {
           "id": "endeavouros",
           "name": "EndeavourOS",
-          "os_family": "linux", "os_version": "rolling", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
           "description": "EndeavourOS — Arch with Calamares installer. Live ISO via netboot.xyz.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu/endeavouros.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu/endeavouros.ipxe"
           }
         },
         {
           "id": "manjaro",
           "name": "Manjaro Linux (KDE)",
-          "os_family": "linux", "os_version": "rolling", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
           "description": "Manjaro KDE edition. Custom boot via netboot.xyz.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         },
         {
           "id": "garuda",
           "name": "Garuda Linux",
-          "os_family": "linux", "os_version": "rolling", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
           "description": "Garuda Linux — gaming-focused Arch derivative.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         }
       ]
@@ -316,48 +370,58 @@
         {
           "id": "nixos-24-11",
           "name": "NixOS 24.11 (stable)",
-          "os_family": "linux", "os_version": "24.11", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "24.11",
+          "arch": "amd64",
           "description": "NixOS 24.11 stable netboot via boot.netboot.xyz (handles netboot tarball extraction).",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu/nixos.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu/nixos.ipxe"
           }
         },
         {
           "id": "kali-linux",
           "name": "Kali Linux (rolling)",
-          "os_family": "linux", "os_version": "rolling", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
           "description": "Kali Linux rolling release netboot — Debian-installer pattern.",
           "media": {
-            "kernel_url": "https://http.kali.org/kali/dists/kali-rolling/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
-            "initrd_url": "https://http.kali.org/kali/dists/kali-rolling/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
+            "kernel_url": "http://http.kali.org/kali/dists/kali-rolling/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux",
+            "initrd_url": "http://http.kali.org/kali/dists/kali-rolling/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz",
             "kernel_args": "auto=true priority=critical interface=auto"
           }
         },
         {
           "id": "void-linux",
           "name": "Void Linux",
-          "os_family": "linux", "os_version": "rolling", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
           "description": "Void Linux — independent xbps-based distro. Live ISO via netboot.xyz.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         },
         {
           "id": "gentoo",
           "name": "Gentoo Linux (admincd)",
-          "os_family": "linux", "os_version": "rolling", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "rolling",
+          "arch": "amd64",
           "description": "Gentoo admincd netboot via netboot.xyz.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu/gentoo.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu/gentoo.ipxe"
           }
         },
         {
           "id": "tails",
           "name": "Tails (privacy live OS)",
-          "os_family": "linux", "os_version": "stable", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "stable",
+          "arch": "amd64",
           "description": "Tails live ISO via netboot.xyz. Designed to leave no trace; useful for incident-response work.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         }
       ]
@@ -369,28 +433,34 @@
         {
           "id": "talos-linux",
           "name": "Talos Linux (Kubernetes OS)",
-          "os_family": "linux", "os_version": "stable", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "stable",
+          "arch": "amd64",
           "description": "Talos Linux netboot — minimal immutable Kubernetes-native OS. Configure via talos.config=<url>.",
           "media": {
-            "kernel_url": "https://github.com/siderolabs/talos/releases/latest/download/vmlinuz-amd64",
-            "initrd_url": "https://github.com/siderolabs/talos/releases/latest/download/initramfs-amd64.xz",
+            "kernel_url": "http://github.com/siderolabs/talos/releases/latest/download/vmlinuz-amd64",
+            "initrd_url": "http://github.com/siderolabs/talos/releases/latest/download/initramfs-amd64.xz",
             "kernel_args": "talos.platform=metal init_on_alloc=1 slab_nomerge pti=on consoleblank=0"
           }
         },
         {
           "id": "proxmox-ve-8",
           "name": "Proxmox VE 8 (via Debian path)",
-          "os_family": "linux", "os_version": "8", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "8",
+          "arch": "amd64",
           "description": "Proxmox VE — Debian first via the debian-12 entry, then add the Proxmox repo via cloud-init runcmd. Direct ISO netboot is not supported by Proxmox upstream.",
           "media": {}
         },
         {
           "id": "esxi",
           "name": "VMware ESXi (recent)",
-          "os_family": "linux", "os_version": "8", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "8",
+          "arch": "amd64",
           "description": "ESXi netboot via netboot.xyz — requires VMware-supplied installer files mirrored on your network.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         }
       ]
@@ -402,37 +472,45 @@
         {
           "id": "memtest86plus",
           "name": "Memtest86+ (RAM test)",
-          "os_family": "linux", "os_version": "stable", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "stable",
+          "arch": "amd64",
           "description": "Memtest86+ — exhaustive RAM testing. Run before deploying to flaky hardware.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         },
         {
           "id": "gparted-live",
           "name": "GParted Live (partition editor)",
-          "os_family": "linux", "os_version": "stable", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "stable",
+          "arch": "amd64",
           "description": "GParted Live — partition editing + filesystem rescue.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         },
         {
           "id": "clonezilla",
           "name": "Clonezilla Live (disk imaging)",
-          "os_family": "linux", "os_version": "stable", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "stable",
+          "arch": "amd64",
           "description": "Clonezilla Live — disk and partition imaging tool.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         },
         {
           "id": "system-rescue",
           "name": "SystemRescue (Linux rescue)",
-          "os_family": "linux", "os_version": "stable", "arch": "amd64",
+          "os_family": "linux",
+          "os_version": "stable",
+          "arch": "amd64",
           "description": "SystemRescue — Linux toolkit for repairing unbootable systems.",
           "media": {
-            "chain_url": "https://boot.netboot.xyz/menu.ipxe"
+            "chain_url": "http://boot.netboot.xyz/menu.ipxe"
           }
         }
       ]
@@ -444,7 +522,9 @@
         {
           "id": "windows-11-stub",
           "name": "Windows 11 (custom WIM required)",
-          "os_family": "windows", "os_version": "11", "arch": "amd64",
+          "os_family": "windows",
+          "os_version": "11",
+          "arch": "amd64",
           "description": "Windows can't be netboot-installed directly from a Microsoft mirror. Capture a WIM (see docs/WINDOWS.md) and host it; populate wimboot/bootwim/install-wim URLs on the image detail page after creation.",
           "media": {
             "wimboot_url": "",
@@ -457,7 +537,7 @@
   ],
   "fallback": {
     "label": "Browse netboot.xyz menu (full catalog)",
-    "chain_url": "https://boot.netboot.xyz/menu.ipxe",
+    "chain_url": "http://boot.netboot.xyz/menu.ipxe",
     "description": "Hands off to netboot.xyz's full menu — ~100+ additional distros, utilities, and live ISOs. Updated continuously by netboot.xyz maintainers."
   }
 }
