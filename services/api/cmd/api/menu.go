@@ -1,18 +1,18 @@
 // Interactive PXE boot menu (Phase 23).
 //
-// Internal endpoints, reached via http-boot's nginx → render proxy:
-//   GET /internal/render/menu/by-mac/{mac}          — the iPXE menu
-//   GET /internal/render/menu/deploy/{mac}/{profile} — mint token, hand
+// Internal endpoints, reached via http-boot's nginx > render proxy:
+//   GET /internal/render/menu/by-mac/{mac}          - the iPXE menu
+//   GET /internal/render/menu/deploy/{mac}/{profile} - mint token, hand
 //       off to the token boot path ({profile} = uuid | "assigned")
 //
 // Authorization: PXE_MENU_MODE=locked (default) shows/permits only the
-// machine's assigned action — semantically identical to the existing
+// machine's assigned action - semantically identical to the existing
 // network-trusted by-mac path. PXE_MENU_MODE=open additionally lets any
 // LAN client deploy any registered profile to any registered machine
-// ("lab mode" — see SECURITY.md). Unregistered MACs can never deploy.
+// ("lab mode" - see SECURITY.md). Unregistered MACs can never deploy.
 //
 // The deploy endpoint mints a real one-shot boot token and chains
-// /boot/<token>.ipxe — which also fixes the latent by-mac bug where the
+// /boot/<token>.ipxe - which also fixes the latent by-mac bug where the
 // rendered script carried an empty token (broken nocloud URL, empty
 // WinPE bearer). Errors return HTTP 200 with a valid iPXE script so the
 // menu's `|| goto menu_failed` recovers instead of iPXE dumping an
@@ -119,7 +119,7 @@ func (h *handlers) buildMenuScript(d menuData) string {
 		}
 	}
 
-	fmt.Fprintf(&b, "#!ipxe\n# deployserver PXE menu — mac %s mode %s\n\n:start\nmenu deployserver — %s\n", d.mac, pxeMenuMode(), title)
+	fmt.Fprintf(&b, "#!ipxe\n# deployserver PXE menu - mac %s mode %s\n\n:start\nmenu deployserver - %s\n", d.mac, pxeMenuMode(), title)
 	if assigned {
 		fmt.Fprintf(&b, "item deploy_assigned Deploy assigned profile: %s\n", d.bundle.ProfileName)
 	}
@@ -133,6 +133,7 @@ func (h *handlers) buildMenuScript(d menuData) string {
 		b.WriteString("item --gap -- -- Distro catalog (untracked net-install) --\n")
 		b.WriteString("item catalog Browse distro catalog ...\n")
 	}
+	b.WriteString("item --gap -- -- Enrollment --\nitem gather Gather Computer Info (register this machine)\n")
 	b.WriteString("item --gap -- -- Tools --\n")
 	if d.memtestURL != "" {
 		b.WriteString("item memtest Memtest86+\n")
@@ -162,6 +163,18 @@ func (h *handlers) buildMenuScript(d menuData) string {
 	if d.memtestURL != "" {
 		fmt.Fprintf(&b, ":memtest\nkernel %s\nboot || goto menu_failed\n\n", d.memtestURL)
 	}
+	fmt.Fprintf(&b, `:gather
+echo Gathering hardware info from SMBIOS ...
+params
+param mac ${net0/mac}
+param manufacturer ${manufacturer}
+param product ${product}
+param serial ${serial}
+param uuid ${uuid}
+param asset ${asset}
+chain https://%s/enroll##params || goto menu_failed
+
+`, fqdn)
 	b.WriteString(":shell\nshell\ngoto start\n\n:reboot\nreboot\n\n:local\necho Booting from local disk ...\nexit 1 || sanboot --no-describe --drive 0x80 || goto start\n\n:menu_failed\necho Action failed. Returning to menu in 5s ...\nsleep 5\ngoto start\n")
 	return b.String()
 }
