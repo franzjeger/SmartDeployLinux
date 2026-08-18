@@ -2598,7 +2598,7 @@ route("/sticks", async () => {
       <div class="page-title">
         <div><h1>Bootstrap sticks</h1>
         <p class="subtitle">Inventory of physical USB sticks. Register after building with <code>make-stick.sh</code>.</p></div>
-        <div class="page-actions"><button class="btn" id="gen-stick-config">Generate stick config</button></div>
+        <div class="page-actions"><a class="btn primary" href="http://192.168.200.31:8080/static/deploy-bootstrap.img" download>Download USB image</a> <button class="btn" id="gen-stick-config">Generate stick config</button></div>
       </div>
       ${ss.length ? `
         <div class="table-wrap"><table>
