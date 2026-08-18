@@ -19,6 +19,7 @@ IPXE_REF ?= v1.21.1
 IPXE_REPO?= https://github.com/ipxe/ipxe.git
 
 CA_CERT  ?= certs/deploy-ca.pem
+TRUST_BUNDLE ?= $(abspath certs/deploy-ca.pem)
 EMBED     = $(WORK)/embed.script
 MOK_KEY  ?= ../bootstrap/keys/MOK.priv
 MOK_CRT  ?= ../bootstrap/keys/MOK.crt
@@ -53,7 +54,7 @@ $(WORK)/embed.script: embed.script
 $(WORK)/ipxe.efi: $(SRC)/.cloned $(SRC)/src/config/local/general.h $(EMBED) $(CA_CERT)
 	$(MAKE) -C $(SRC)/src NO_WERROR=1 \
 		EMBED=$(abspath $(EMBED)) \
-		TRUST=$(abspath $(CA_CERT)) \
+		TRUST=$(TRUST_BUNDLE) \
 		CERT=$(abspath $(CA_CERT)) \
 		bin-x86_64-efi/ipxe.efi
 	cp $(SRC)/src/bin-x86_64-efi/ipxe.efi $@
@@ -61,7 +62,7 @@ $(WORK)/ipxe.efi: $(SRC)/.cloned $(SRC)/src/config/local/general.h $(EMBED) $(CA
 $(WORK)/snponly.efi: $(SRC)/.cloned $(SRC)/src/config/local/general.h $(EMBED) $(CA_CERT)
 	$(MAKE) -C $(SRC)/src NO_WERROR=1 \
 		EMBED=$(abspath $(EMBED)) \
-		TRUST=$(abspath $(CA_CERT)) \
+		TRUST=$(TRUST_BUNDLE) \
 		CERT=$(abspath $(CA_CERT)) \
 		bin-x86_64-efi/snponly.efi
 	cp $(SRC)/src/bin-x86_64-efi/snponly.efi $@
@@ -69,7 +70,7 @@ $(WORK)/snponly.efi: $(SRC)/.cloned $(SRC)/src/config/local/general.h $(EMBED) $
 $(WORK)/undionly.kpxe: $(SRC)/.cloned $(SRC)/src/config/local/general.h $(EMBED) $(CA_CERT)
 	$(MAKE) -C $(SRC)/src NO_WERROR=1 \
 		EMBED=$(abspath $(EMBED)) \
-		TRUST=$(abspath $(CA_CERT)) \
+		TRUST=$(TRUST_BUNDLE) \
 		CERT=$(abspath $(CA_CERT)) \
 		bin/undionly.kpxe
 	cp $(SRC)/src/bin/undionly.kpxe $@
