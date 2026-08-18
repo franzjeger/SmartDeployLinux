@@ -94,11 +94,18 @@ echo "==> populating ESP"
 mkdir -p "$MOUNT_ESP/EFI/BOOT"
 # Microsoft-signed shim is expected to live next to this script as
 # external/shim/shimx64.efi (downloaded once via bootstrap/external/fetch.sh).
-SHIM=../external/shim/shimx64.efi
-GRUB=../external/grub/grubx64.efi
+HERE="$(cd "$(dirname "$0")" && pwd)"
+SHIM="$HERE/../external/shim/shimx64.efi"
+GRUB="$HERE/../external/grub/grubx64.efi"
 if [ -r "$SHIM" ] && [ -r "$GRUB" ]; then
     install -m 0644 "$SHIM" "$MOUNT_ESP/EFI/BOOT/BOOTX64.EFI"
     install -m 0644 "$GRUB" "$MOUNT_ESP/EFI/BOOT/grubx64.efi"
+elif [ -r "$GRUB" ]; then
+    # No shim available (non-Secure-Boot deployment): boot grub directly as
+    # the firmware's default loader.
+    install -m 0644 "$GRUB" "$MOUNT_ESP/EFI/BOOT/BOOTX64.EFI"
+    install -m 0644 "$GRUB" "$MOUNT_ESP/EFI/BOOT/grubx64.efi"
+    echo "note: no shim; grub installed as BOOTX64.EFI (Secure Boot must be OFF)"
 else
     echo "WARN: shim/grub binaries missing. Secure Boot path will not work."
     echo "      Run bootstrap/external/fetch.sh first."
@@ -131,6 +138,11 @@ install -m 0644 "$IPXE_BIOS" "$MOUNT_FS/opt/iPXE/undionly.kpxe"
 # config.json template lives in initramfs (overlay), not on this
 # partition; make-stick.sh writes the rendered config.json into the
 # rootfs partition's /etc/deploy/.
+# Ship the config template so make-stick.sh can render config.json into this
+# partition (the initramfs also carries it for the runtime path).
+if [ -r "$HERE/../overlay/etc/deploy/config.json.template" ]; then
+    install -m 0644 "$HERE/../overlay/etc/deploy/config.json.template" "$MOUNT_FS/etc/deploy/config.json.template"
+fi
 touch "$MOUNT_FS/etc/deploy/.placeholder"
 
 sync
