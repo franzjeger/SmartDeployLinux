@@ -90,6 +90,16 @@ fi
 
 report imaging "linux golden restore starting ($BOOT_MODE, layout=$DEPLOY_LAYOUT)"
 
+# Make sure storage drivers are bound before probing. NVMe hidden behind
+# Intel VMD/RST is invisible until the vmd module claims it; cover the usual
+# controllers so a generic imaging kernel still finds the disk.
+for _m in vmd nvme nvme_core ahci sd_mod mmc_block sdhci_pci; do
+    modprobe "$_m" 2>/dev/null || true
+done
+udevadm settle 2>/dev/null || true
+sleep 2
+report imaging "block devices seen: $(lsblk -dnro NAME,SIZE,TYPE 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
+
 # --- 1. pick the target disk (DESTRUCTIVE) ---------------------------
 if [ -n "${DEPLOY_TARGET_DISK:-}" ]; then
     # Operator/automation override: use exactly this block device. Must be
@@ -113,7 +123,7 @@ else
         fi
     done
 fi
-[ -n "$DISK" ] || fatal "no target disk found"
+[ -n "$DISK" ] || fatal "no target disk found (kernel saw: $(lsblk -dnro NAME,TYPE 2>/dev/null | tr '\n' ' ' | sed 's/ *$//' || echo none)); if this is an Intel VMD/RST system, set BIOS storage mode to AHCI"
 report imaging "partitioning $DISK (DESTRUCTIVE)"
 
 # --- 2. partition per boot mode + layout -----------------------------
