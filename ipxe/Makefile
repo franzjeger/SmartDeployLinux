@@ -19,7 +19,7 @@ IPXE_REF ?= v1.21.1
 IPXE_REPO?= https://github.com/ipxe/ipxe.git
 
 CA_CERT  ?= certs/deploy-ca.pem
-EMBED    := $(WORK)/embed.script
+EMBED     = $(WORK)/embed.script
 MOK_KEY  ?= ../bootstrap/keys/MOK.priv
 MOK_CRT  ?= ../bootstrap/keys/MOK.crt
 

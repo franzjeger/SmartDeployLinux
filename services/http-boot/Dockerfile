@@ -7,7 +7,7 @@
 #  2. Render per-machine iPXE scripts on demand. A small Go binary handles
 #     this; nginx proxies to it.
 
-FROM golang:1.23.4-alpine AS gobuild
+FROM golang:1.25.12-alpine AS gobuild
 WORKDIR /src
 RUN apk add --no-cache git
 COPY go.mod go.sum ./

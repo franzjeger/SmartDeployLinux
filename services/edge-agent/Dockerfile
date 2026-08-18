@@ -11,7 +11,7 @@
 #   - edge-agent (this Go binary; orchestrates the two and registers
 #                 with the deploy server)
 
-FROM golang:1.23.4-alpine AS gobuild
+FROM golang:1.25.12-alpine AS gobuild
 WORKDIR /src
 COPY go.mod ./
 RUN go mod download
