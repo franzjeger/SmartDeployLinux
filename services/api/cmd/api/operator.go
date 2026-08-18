@@ -884,12 +884,12 @@ func (h *handlers) catalogMenuIPXE(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			b.WriteString("echo Booting " + e.Name + " ...\n")
-			b.WriteString("kernel " + kernel)
+			b.WriteString("kernel " + cacheRewrite(kernel))
 			if args != "" {
-				b.WriteString(" " + args)
+				b.WriteString(" " + cacheRewrite(args))
 			}
 			b.WriteString("\n")
-			b.WriteString("initrd " + initrd + "\n")
+			b.WriteString("initrd " + cacheRewrite(initrd) + "\n")
 			b.WriteString("boot || goto failed\n\n")
 		}
 	}
