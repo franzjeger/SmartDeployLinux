@@ -199,6 +199,7 @@ func serve() {
 	// (HA gap closed — see pgbus doc comment).
 	bus := pgbus.New(st.Pool())
 	go bus.Run(ctx)
+	go pruneJobsLoop(ctx, st)
 
 	reg := metrics.NewRegistry()
 	h := &handlers{
@@ -472,6 +473,8 @@ func (h *handlers) registerOperatorRoutes(r chi.Router) {
 	r.Get("/jobs", h.listJobs)
 	r.Get("/jobs/{id}", h.getJob)
 	r.Post("/jobs/{id}/cancel", h.cancelJob)
+	r.Delete("/jobs/{id}", h.deleteJob)
+	r.Post("/jobs/prune", h.pruneJobs)
 	r.Get("/audit", h.queryAudit)
 	r.Get("/reports/summary", h.reportSummary)
 	r.Get("/reports/daily", h.reportDaily)
