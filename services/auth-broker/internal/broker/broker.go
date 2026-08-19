@@ -208,8 +208,12 @@ func (b *Broker) handleRedeem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	chainFQDN := b.cfg.DeployFQDN
+	if b.cfg.DeployFQDNTailnet != "" && r.Header.Get("X-Forwarded-Host") == b.cfg.DeployFQDNTailnet {
+		chainFQDN = b.cfg.DeployFQDNTailnet
+	}
 	chainURL := fmt.Sprintf("https://%s/boot/%s.ipxe",
-		b.cfg.DeployFQDN, bootToken)
+		chainFQDN, bootToken)
 
 	resp := redeemResp{
 		AuthKey:      authKey,
@@ -365,9 +369,13 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
+var brokerTailnetPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
 func remoteAddr(r *http.Request) netip.Addr {
 	host := r.RemoteAddr
-	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+	if xs := strings.TrimSpace(r.Header.Get("X-Source-IP")); xs != "" {
+		host = xs
+	} else if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		host = h
 	}
 	host = strings.TrimSpace(host)

@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"text/template"
@@ -231,7 +232,7 @@ func userDataBase(fqdn string) string {
 	return "https://" + fqdn
 }
 
-func (h *handlers) writeIPXE(w http.ResponseWriter, _ *http.Request, data *machineProfileResp) {
+func (h *handlers) writeIPXE(w http.ResponseWriter, r *http.Request, data *machineProfileResp) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	fqdn := getenv("DEPLOY_FQDN", "deploy.example.com")
@@ -241,14 +242,17 @@ func (h *handlers) writeIPXE(w http.ResponseWriter, _ *http.Request, data *machi
 		UserDataBase string
 	}{data, fqdn, userDataBase(fqdn)}
 
+	var buf bytes.Buffer
 	switch strings.ToLower(data.Image.OSFamily) {
 	case "linux":
-		_ = linuxTpl.Execute(w, tplData)
+		_ = linuxTpl.Execute(&buf, tplData)
 	case "windows":
-		_ = windowsTpl.Execute(w, tplData)
+		_ = windowsTpl.Execute(&buf, tplData)
 	default:
 		http.Error(w, "unknown os_family: "+data.Image.OSFamily, 500)
+		return
 	}
+	_, _ = w.Write(rewriteForClient(r, buf.Bytes()))
 }
 
 // proxyMenu passes menu requests through to the api unchanged. On
@@ -270,7 +274,8 @@ func (h *handlers) proxyMenu(apiPrefix string) http.HandlerFunc {
 		defer resp.Body.Close()
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = io.Copy(w, resp.Body)
+		body, _ := io.ReadAll(resp.Body)
+		_, _ = w.Write(rewriteForClient(r, body))
 	}
 }
 
@@ -287,7 +292,8 @@ func (h *handlers) proxyMenuDeploy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	body, _ := io.ReadAll(resp.Body)
+	_, _ = w.Write(rewriteForClient(r, body))
 }
 
 func (h *handlers) renderUserData(w http.ResponseWriter, r *http.Request) {

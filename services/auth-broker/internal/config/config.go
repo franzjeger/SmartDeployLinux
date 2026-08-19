@@ -40,6 +40,7 @@ type Config struct {
 	TailscaleTailnet string
 
 	DeployFQDN     string
+	DeployFQDNTailnet string
 	APIInternalURL string
 
 	// IssueSharedSecret gates POST /issue-code. When set, callers must
@@ -70,6 +71,7 @@ func FromEnv() (*Config, error) {
 		TailscaleAPIKey:  os.Getenv("TAILSCALE_API_KEY"),
 		TailscaleTailnet: os.Getenv("TAILSCALE_TAILNET"),
 		DeployFQDN:       os.Getenv("DEPLOY_FQDN"),
+		DeployFQDNTailnet: os.Getenv("DEPLOY_FQDN_TAILNET"),
 		APIInternalURL:   getenv("API_INTERNAL_URL", "http://api:8080"),
 		AuditFile:         os.Getenv("AUDIT_FILE"),
 		IssueSharedSecret: os.Getenv("AUTH_BROKER_ISSUE_SHARED_SECRET"),
