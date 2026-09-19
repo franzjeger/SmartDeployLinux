@@ -48,7 +48,7 @@ jobs:
             services/sdk/spectest/go.sum
             tests/e2e/go.sum
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
